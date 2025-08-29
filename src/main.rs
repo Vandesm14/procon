@@ -1,5 +1,5 @@
 use std::{
-  collections::{BTreeMap, HashMap},
+  collections::BTreeMap,
   fs,
   hash::{DefaultHasher, Hash, Hasher},
   path::PathBuf,
@@ -22,17 +22,17 @@ enum Commands {
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 struct Generations {
-  modules: HashMap<PathBuf, String>,
-  managers: HashMap<PathBuf, String>,
-  projects: HashMap<PathBuf, String>,
+  modules: BTreeMap<PathBuf, String>,
+  managers: BTreeMap<PathBuf, String>,
+  projects: BTreeMap<PathBuf, String>,
 }
 
 impl Generations {
   pub fn new() -> Self {
     Self {
-      modules: HashMap::new(),
-      managers: HashMap::new(),
-      projects: HashMap::new(),
+      modules: BTreeMap::new(),
+      managers: BTreeMap::new(),
+      projects: BTreeMap::new(),
     }
   }
 
@@ -49,8 +49,8 @@ impl Generations {
   }
 
   fn compare_list(
-    some: &HashMap<PathBuf, String>,
-    other: &HashMap<PathBuf, String>,
+    some: &BTreeMap<PathBuf, String>,
+    other: &BTreeMap<PathBuf, String>,
   ) -> Vec<(PathBuf, Status)> {
     let mut changes: Vec<(PathBuf, Status)> = Vec::new();
     for (path, hash) in some.iter() {
