@@ -1,7 +1,6 @@
-phase.install = [
-  "curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh",
-  "cargo install sccache --locked",
-]
-phase.update = "rustup update"
+deps.nix = ["rustup", "sccache"]
 
-module.env.RUSTC_WRAPPER = "$HOME/.cargo/bin/sccache"
+phase.setup = ["rustup install stable"]
+phase.update = ["rustup update"]
+
+env.RUSTC_WRAPPER = "$HOME/.cargo/bin/sccache"

@@ -1,9 +1,9 @@
-source.path = "$HOME/projects/my-project"
-# source.git = "https://github.com/user/my-project"
-# souce.zip = "./$HOME/downloads/my-project.zip"
+source.git = "https://github.com/vandesm14/airwave"
+# source.path = "$HOME/projects/my-project"
+# souce.zip = "$HOME/downloads/my-project.zip"
 
-deps.modules = ["nginx", "bun"]
-deps.system = ["git", "curl"]
+deps.modules = ["rust"]
+deps.nix = ["just", "mprocs"]
 
-phase.build = ["bun install", "bun run test", "bun run build"]
-phase.start = "bun run dev"
+phase.build = ["cargo build"]
+phase.start = "just dev"

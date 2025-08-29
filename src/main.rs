@@ -37,13 +37,23 @@ enum Source {
 
 #[derive(Debug, Clone, PartialEq, Hash, Serialize, Deserialize)]
 struct Phases {
+  /// Runs once, after the source and deps are installed.
+  setup: Cmds,
+  /// Runs on an update trigger.
+  update: Cmds,
+  /// Runs after an update.
   build: Cmds,
+  /// Starts the project.
   start: Cmds,
+  /// Stops the project.
+  stop: Cmds,
 }
 
-#[derive(Debug, Clone, PartialEq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Hash, Default, Serialize, Deserialize)]
 #[serde(untagged)]
 enum Cmds {
+  #[default]
+  None,
   Single(String),
   Many(Vec<String>),
 }
