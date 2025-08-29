@@ -1,0 +1,9 @@
+source.path = "$HOME/projects/my-project"
+# source.git = "https://github.com/user/my-project"
+# souce.zip = "./$HOME/downloads/my-project.zip"
+
+deps.modules = ["nginx", "bun"]
+deps.system = ["git", "curl"]
+
+phase.build = ["bun install", "bun run test", "bun run build"]
+phase.start = ["bun run dev"]
