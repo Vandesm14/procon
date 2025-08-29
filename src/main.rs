@@ -1,4 +1,5 @@
 use std::{
+  collections::BTreeMap,
   fs,
   hash::{DefaultHasher, Hash, Hasher},
   path::PathBuf,
@@ -22,6 +23,8 @@ enum Commands {
 #[derive(Debug, Clone, PartialEq, Hash, Serialize, Deserialize)]
 struct Project {
   source: Source,
+  deps: BTreeMap<String, Vec<String>>,
+  phase: Phases,
 }
 
 #[derive(Debug, Clone, PartialEq, Hash, Serialize, Deserialize)]
@@ -30,6 +33,19 @@ enum Source {
   Path(PathBuf),
   Git(String),
   Zip(PathBuf),
+}
+
+#[derive(Debug, Clone, PartialEq, Hash, Serialize, Deserialize)]
+struct Phases {
+  build: Cmds,
+  start: Cmds,
+}
+
+#[derive(Debug, Clone, PartialEq, Hash, Serialize, Deserialize)]
+#[serde(untagged)]
+enum Cmds {
+  Single(String),
+  Many(Vec<String>),
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {

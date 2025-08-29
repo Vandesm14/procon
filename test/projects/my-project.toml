@@ -6,4 +6,4 @@ deps.modules = ["nginx", "bun"]
 deps.system = ["git", "curl"]
 
 phase.build = ["bun install", "bun run test", "bun run build"]
-phase.start = ["bun run dev"]
+phase.start = "bun run dev"
