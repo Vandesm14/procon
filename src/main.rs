@@ -23,7 +23,6 @@ enum Commands {
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 struct Generations {
   modules: BTreeMap<PathBuf, String>,
-  managers: BTreeMap<PathBuf, String>,
   projects: BTreeMap<PathBuf, String>,
 }
 
@@ -31,17 +30,12 @@ impl Generations {
   pub fn new() -> Self {
     Self {
       modules: BTreeMap::new(),
-      managers: BTreeMap::new(),
       projects: BTreeMap::new(),
     }
   }
 
   pub fn add_module(&mut self, module: PathBuf, hash: u64) {
     self.modules.insert(module, hash.to_string());
-  }
-
-  pub fn add_manager(&mut self, manager: PathBuf, hash: u64) {
-    self.managers.insert(manager, hash.to_string());
   }
 
   pub fn add_project(&mut self, project: PathBuf, hash: u64) {
@@ -76,10 +70,6 @@ impl Generations {
     Self::compare_list(&self.modules, &other.modules)
   }
 
-  pub fn compare_managers(&self, other: &Self) -> Vec<(PathBuf, Status)> {
-    Self::compare_list(&self.managers, &other.managers)
-  }
-
   pub fn compare_projects(&self, other: &Self) -> Vec<(PathBuf, Status)> {
     Self::compare_list(&self.projects, &other.projects)
   }
@@ -87,7 +77,6 @@ impl Generations {
   pub fn compare(&self, other: &Self) -> Vec<(PathBuf, Status)> {
     let mut changes = Vec::new();
     changes.extend(self.compare_modules(other));
-    changes.extend(self.compare_managers(other));
     changes.extend(self.compare_projects(other));
     changes
   }
@@ -153,22 +142,6 @@ enum Cmds {
   Many(Vec<String>),
 }
 
-#[derive(Debug, Clone, PartialEq, Hash, Default, Serialize, Deserialize)]
-struct Manager {
-  /// Adds a package.
-  #[serde(default)]
-  add: Cmds,
-  /// Removes a package.
-  #[serde(default)]
-  remove: Cmds,
-  /// Syncs package lists.
-  #[serde(default)]
-  sync: Cmds,
-  /// Upgrades all packages.
-  #[serde(default)]
-  upgrade: Cmds,
-}
-
 fn hash_once<T>(hashable: T) -> u64
 where
   T: Hash,
@@ -184,11 +157,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Commands::Debug { path } => {
       let path = path.unwrap_or(".".into());
       let modules_path = path.join("modules");
-      let managers_path = path.join("managers");
       let projects_path = path.join("projects");
       let generations_path = path.join("generations.toml");
 
-      // let generations: Generations = fs::read_to_string(&toml::from_str(&)?)?;
       let generations: Generations =
         if fs::exists(&generations_path).is_ok_and(|x| x) {
           let str = fs::read_to_string(&generations_path).unwrap();
@@ -198,20 +169,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         };
 
       let mut new_generations = Generations::new();
-
-      println!("managers:");
-      for path in
-        fs::read_dir(managers_path)?.filter_map(|e| e.ok().map(|e| e.path()))
-      {
-        let manager: Manager =
-          toml::from_str(&fs::read_to_string(path.clone())?)?;
-        let hash = hash_once(&manager);
-        println!("hash: {hash}, manager: {manager:?}");
-
-        new_generations.add_manager(path, hash);
-      }
-
-      println!();
       println!("modules:");
       for path in
         fs::read_dir(modules_path)?.filter_map(|e| e.ok().map(|e| e.path()))
