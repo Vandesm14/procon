@@ -124,6 +124,9 @@ enum Source {
 
 #[derive(Debug, Clone, PartialEq, Hash, Default, Serialize, Deserialize)]
 struct Phases {
+  /// Runs once, before source and deps are installed.
+  #[serde(default)]
+  install: Cmds,
   /// Runs once, after the source and deps are installed.
   #[serde(default)]
   setup: Cmds,
@@ -187,21 +190,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
       let mut new_generations = Generations::new();
 
-      println!("modules:");
-      for entry in fs::read_dir(modules_path)? {
-        let path = entry?.path();
-        let string = fs::read_to_string(path.clone())?;
-        let module: Project = toml::from_str(&string)?;
-
-        let mut hasher = DefaultHasher::new();
-        module.hash(&mut hasher);
-        let hash = hasher.finish();
-        println!("hash: {hash}, module: {module:?}");
-
-        new_generations.add_module(path, hash);
-      }
-
-      println!();
       println!("managers:");
       for entry in fs::read_dir(managers_path)? {
         let path = entry?.path();
@@ -214,6 +202,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("hash: {hash}, manager: {manager:?}");
 
         new_generations.add_manager(path, hash);
+      }
+
+      println!();
+      println!("modules:");
+      for entry in fs::read_dir(modules_path)? {
+        let path = entry?.path();
+        let string = fs::read_to_string(path.clone())?;
+        let module: Project = toml::from_str(&string)?;
+
+        let mut hasher = DefaultHasher::new();
+        module.hash(&mut hasher);
+        let hash = hasher.finish();
+        println!("hash: {hash}, module: {module:?}");
+
+        new_generations.add_module(path, hash);
       }
 
       println!();
