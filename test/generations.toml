@@ -1,3 +1,9 @@
+[modules]
+"test/modules/rust.toml" = "12948908947586820052"
+
+[managers]
+"test/managers/cargo.toml" = "14195237059301458626"
+
 [projects]
-"test/projects/airwave.toml" = "6144322287009944474"
-"test/projects/thedevbird.toml" = "15971203184467736206"
+"test/projects/thedevbird.toml" = "595774427708937673"
+"test/projects/airwave.toml" = "7565176689252771969"

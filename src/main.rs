@@ -22,24 +22,39 @@ enum Commands {
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 struct Generations {
+  modules: HashMap<PathBuf, String>,
+  managers: HashMap<PathBuf, String>,
   projects: HashMap<PathBuf, String>,
 }
 
 impl Generations {
   pub fn new() -> Self {
     Self {
+      modules: HashMap::new(),
+      managers: HashMap::new(),
       projects: HashMap::new(),
     }
   }
 
-  pub fn add(&mut self, project: PathBuf, hash: u64) {
+  pub fn add_module(&mut self, module: PathBuf, hash: u64) {
+    self.modules.insert(module, hash.to_string());
+  }
+
+  pub fn add_manager(&mut self, manager: PathBuf, hash: u64) {
+    self.managers.insert(manager, hash.to_string());
+  }
+
+  pub fn add_project(&mut self, project: PathBuf, hash: u64) {
     self.projects.insert(project, hash.to_string());
   }
 
-  pub fn compare(&self, other: &Self) -> Vec<(PathBuf, Status)> {
+  fn compare_list(
+    some: &HashMap<PathBuf, String>,
+    other: &HashMap<PathBuf, String>,
+  ) -> Vec<(PathBuf, Status)> {
     let mut changes: Vec<(PathBuf, Status)> = Vec::new();
-    for (path, hash) in self.projects.iter() {
-      if let Some(other_project) = other.projects.get(path) {
+    for (path, hash) in some.iter() {
+      if let Some(other_project) = other.get(path) {
         if hash != other_project {
           changes.push((path.clone(), Status::Changed));
         }
@@ -48,12 +63,32 @@ impl Generations {
       }
     }
 
-    for (path, _) in other.projects.iter() {
-      if !self.projects.contains_key(path) {
+    for (path, _) in other.iter() {
+      if !some.contains_key(path) {
         changes.push((path.clone(), Status::Removed));
       }
     }
 
+    changes
+  }
+
+  pub fn compare_modules(&self, other: &Self) -> Vec<(PathBuf, Status)> {
+    Self::compare_list(&self.modules, &other.modules)
+  }
+
+  pub fn compare_managers(&self, other: &Self) -> Vec<(PathBuf, Status)> {
+    Self::compare_list(&self.managers, &other.managers)
+  }
+
+  pub fn compare_projects(&self, other: &Self) -> Vec<(PathBuf, Status)> {
+    Self::compare_list(&self.projects, &other.projects)
+  }
+
+  pub fn compare(&self, other: &Self) -> Vec<(PathBuf, Status)> {
+    let mut changes = Vec::new();
+    changes.extend(self.compare_modules(other));
+    changes.extend(self.compare_managers(other));
+    changes.extend(self.compare_projects(other));
     changes
   }
 }
@@ -67,20 +102,27 @@ enum Status {
 
 #[derive(Debug, Clone, PartialEq, Hash, Serialize, Deserialize)]
 struct Project {
+  #[serde(default)]
   source: Source,
+  #[serde(default)]
   deps: BTreeMap<String, Vec<String>>,
+  #[serde(default)]
   phase: Phases,
+  #[serde(default)]
+  env: BTreeMap<String, String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Hash, Default, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 enum Source {
+  #[default]
+  None,
   Path(PathBuf),
   Git(String),
   Zip(PathBuf),
 }
 
-#[derive(Debug, Clone, PartialEq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Hash, Default, Serialize, Deserialize)]
 struct Phases {
   /// Runs once, after the source and deps are installed.
   #[serde(default)]
@@ -108,22 +150,75 @@ enum Cmds {
   Many(Vec<String>),
 }
 
+#[derive(Debug, Clone, PartialEq, Hash, Default, Serialize, Deserialize)]
+struct Manager {
+  /// Adds a package.
+  #[serde(default)]
+  add: Cmds,
+  /// Removes a package.
+  #[serde(default)]
+  remove: Cmds,
+  /// Syncs package lists.
+  #[serde(default)]
+  sync: Cmds,
+  /// Upgrades all packages.
+  #[serde(default)]
+  upgrade: Cmds,
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
   let cli = Cli::parse();
   match cli.cmd {
     Commands::Debug { path } => {
       let path = path.unwrap_or(".".into());
-      let project_path = path.join("projects");
+      let modules_path = path.join("modules");
+      let managers_path = path.join("managers");
+      let projects_path = path.join("projects");
       let generations_path = path.join("generations.toml");
 
-      let generations: Generations = toml::from_str(
-        &fs::read_to_string(&generations_path).unwrap_or_default(),
-      )?;
+      // let generations: Generations = fs::read_to_string(&toml::from_str(&)?)?;
+      let generations: Generations =
+        if fs::exists(&generations_path).is_ok_and(|x| x) {
+          let str = fs::read_to_string(&generations_path).unwrap();
+          toml::from_str(&str)?
+        } else {
+          Generations::new()
+        };
 
-      let mut projects: Vec<Project> = Vec::new();
       let mut new_generations = Generations::new();
+
+      println!("modules:");
+      for entry in fs::read_dir(modules_path)? {
+        let path = entry?.path();
+        let string = fs::read_to_string(path.clone())?;
+        let module: Project = toml::from_str(&string)?;
+
+        let mut hasher = DefaultHasher::new();
+        module.hash(&mut hasher);
+        let hash = hasher.finish();
+        println!("hash: {hash}, module: {module:?}");
+
+        new_generations.add_module(path, hash);
+      }
+
+      println!();
+      println!("managers:");
+      for entry in fs::read_dir(managers_path)? {
+        let path = entry?.path();
+        let string = fs::read_to_string(path.clone())?;
+        let manager: Manager = toml::from_str(&string)?;
+
+        let mut hasher = DefaultHasher::new();
+        manager.hash(&mut hasher);
+        let hash = hasher.finish();
+        println!("hash: {hash}, manager: {manager:?}");
+
+        new_generations.add_manager(path, hash);
+      }
+
+      println!();
       println!("projects:");
-      for entry in fs::read_dir(project_path)? {
+      for entry in fs::read_dir(projects_path)? {
         let path = entry?.path();
         let string = fs::read_to_string(path.clone())?;
         let project: Project = toml::from_str(&string)?;
@@ -132,9 +227,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         project.hash(&mut hasher);
         let hash = hasher.finish();
         println!("hash: {hash}, project: {project:?}");
-        projects.push(project);
 
-        new_generations.add(path, hash);
+        new_generations.add_project(path, hash);
       }
 
       println!();

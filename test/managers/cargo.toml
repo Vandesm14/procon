@@ -1,0 +1,4 @@
+add = "cargo install #:?"
+remove = "cargo uninstall #:?"
+# sync = "<COMMAND>"
+# upgrade = "<COMMAND>"
