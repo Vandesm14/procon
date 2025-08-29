@@ -1,5 +1,5 @@
 source.git = "https://github.com/vandesm14/airwave"
-# source.path = "$HOME/projects/my-project"
+# source.path = "."
 # souce.zip = "$HOME/downloads/my-project.zip"
 
 deps.modules = ["rust"]

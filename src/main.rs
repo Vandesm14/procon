@@ -1,5 +1,5 @@
 use std::{
-  collections::BTreeMap,
+  collections::{BTreeMap, HashMap},
   fs,
   hash::{DefaultHasher, Hash, Hasher},
   path::PathBuf,
@@ -12,12 +12,57 @@ use serde::{Deserialize, Serialize};
 #[command(author, version, about)]
 struct Cli {
   #[command(subcommand)]
-  pub cmd: Commands,
+  cmd: Commands,
 }
 
 #[derive(Subcommand)]
 enum Commands {
   Debug { path: Option<PathBuf> },
+}
+
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+struct Generations {
+  projects: HashMap<PathBuf, String>,
+}
+
+impl Generations {
+  pub fn new() -> Self {
+    Self {
+      projects: HashMap::new(),
+    }
+  }
+
+  pub fn add(&mut self, project: PathBuf, hash: u64) {
+    self.projects.insert(project, hash.to_string());
+  }
+
+  pub fn compare(&self, other: &Self) -> Vec<(PathBuf, Status)> {
+    let mut changes: Vec<(PathBuf, Status)> = Vec::new();
+    for (path, hash) in self.projects.iter() {
+      if let Some(other_project) = other.projects.get(path) {
+        if hash != other_project {
+          changes.push((path.clone(), Status::Changed));
+        }
+      } else {
+        changes.push((path.clone(), Status::Added));
+      }
+    }
+
+    for (path, _) in other.projects.iter() {
+      if !self.projects.contains_key(path) {
+        changes.push((path.clone(), Status::Removed));
+      }
+    }
+
+    changes
+  }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+enum Status {
+  Added,
+  Removed,
+  Changed,
 }
 
 #[derive(Debug, Clone, PartialEq, Hash, Serialize, Deserialize)]
@@ -69,12 +114,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Commands::Debug { path } => {
       let path = path.unwrap_or(".".into());
       let project_path = path.join("projects");
+      let generations_path = path.join("generations.toml");
+
+      let generations: Generations = toml::from_str(
+        &fs::read_to_string(&generations_path).unwrap_or_default(),
+      )?;
 
       let mut projects: Vec<Project> = Vec::new();
+      let mut new_generations = Generations::new();
       println!("projects:");
       for entry in fs::read_dir(project_path)? {
         let path = entry?.path();
-        let string = fs::read_to_string(path)?;
+        let string = fs::read_to_string(path.clone())?;
         let project: Project = toml::from_str(&string)?;
 
         let mut hasher = DefaultHasher::new();
@@ -82,7 +133,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let hash = hasher.finish();
         println!("hash: {hash}, project: {project:?}");
         projects.push(project);
+
+        new_generations.add(path, hash);
       }
+
+      println!();
+      println!("changes: {:?}", new_generations.compare(&generations));
+
+      fs::write(generations_path, toml::to_string(&new_generations)?)?
     }
   }
 
