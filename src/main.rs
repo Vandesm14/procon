@@ -169,6 +169,15 @@ struct Manager {
   upgrade: Cmds,
 }
 
+fn hash_once<T>(hashable: T) -> u64
+where
+  T: Hash,
+{
+  let mut hasher = DefaultHasher::new();
+  hashable.hash(&mut hasher);
+  hasher.finish()
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
   let cli = Cli::parse();
   match cli.cmd {
@@ -191,14 +200,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
       let mut new_generations = Generations::new();
 
       println!("managers:");
-      for entry in fs::read_dir(managers_path)? {
-        let path = entry?.path();
-        let string = fs::read_to_string(path.clone())?;
-        let manager: Manager = toml::from_str(&string)?;
-
-        let mut hasher = DefaultHasher::new();
-        manager.hash(&mut hasher);
-        let hash = hasher.finish();
+      for path in
+        fs::read_dir(managers_path)?.filter_map(|e| e.ok().map(|e| e.path()))
+      {
+        let manager: Manager =
+          toml::from_str(&fs::read_to_string(path.clone())?)?;
+        let hash = hash_once(&manager);
         println!("hash: {hash}, manager: {manager:?}");
 
         new_generations.add_manager(path, hash);
@@ -206,14 +213,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
       println!();
       println!("modules:");
-      for entry in fs::read_dir(modules_path)? {
-        let path = entry?.path();
-        let string = fs::read_to_string(path.clone())?;
-        let module: Project = toml::from_str(&string)?;
-
-        let mut hasher = DefaultHasher::new();
-        module.hash(&mut hasher);
-        let hash = hasher.finish();
+      for path in
+        fs::read_dir(modules_path)?.filter_map(|e| e.ok().map(|e| e.path()))
+      {
+        let module: Project =
+          toml::from_str(&fs::read_to_string(path.clone())?)?;
+        let hash = hash_once(&module);
         println!("hash: {hash}, module: {module:?}");
 
         new_generations.add_module(path, hash);
@@ -221,16 +226,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
       println!();
       println!("projects:");
-      for entry in fs::read_dir(projects_path)? {
-        let path = entry?.path();
-        let string = fs::read_to_string(path.clone())?;
-        let project: Project = toml::from_str(&string)?;
-
-        let mut hasher = DefaultHasher::new();
-        project.hash(&mut hasher);
-        let hash = hasher.finish();
+      for path in
+        fs::read_dir(projects_path)?.filter_map(|e| e.ok().map(|e| e.path()))
+      {
+        let project: Project =
+          toml::from_str(&fs::read_to_string(path.clone())?)?;
+        let hash = hash_once(&project);
         println!("hash: {hash}, project: {project:?}");
-
         new_generations.add_project(path, hash);
       }
 
