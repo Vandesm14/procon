@@ -38,14 +38,19 @@ enum Source {
 #[derive(Debug, Clone, PartialEq, Hash, Serialize, Deserialize)]
 struct Phases {
   /// Runs once, after the source and deps are installed.
+  #[serde(default)]
   setup: Cmds,
   /// Runs on an update trigger.
+  #[serde(default)]
   update: Cmds,
   /// Runs after an update.
+  #[serde(default)]
   build: Cmds,
   /// Starts the project.
+  #[serde(default)]
   start: Cmds,
   /// Stops the project.
+  #[serde(default)]
   stop: Cmds,
 }
 
