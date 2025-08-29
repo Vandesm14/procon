@@ -1,0 +1,13 @@
+# Rust build artifacts
+target/
+
+# Git
+.git/
+.gitignore
+
+# Docker
+Dockerfile
+.dockerignore
+
+# Other
+justfile
