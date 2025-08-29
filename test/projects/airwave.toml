@@ -5,5 +5,5 @@ source.git = "https://github.com/vandesm14/airwave"
 deps.modules = ["rust"]
 deps.nix = ["just", "mprocs"]
 
-phase.build = ["cargo build"]
+phase.build = "cargo build"
 phase.start = "just dev"

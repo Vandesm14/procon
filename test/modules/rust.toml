@@ -1,6 +1,6 @@
 deps.nix = ["rustup", "sccache"]
 
-phase.setup = ["rustup install stable"]
-phase.update = ["rustup update"]
+phase.setup = "rustup install stable"
+phase.update = "rustup update"
 
 env.RUSTC_WRAPPER = "$HOME/.cargo/bin/sccache"
