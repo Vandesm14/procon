@@ -97,10 +97,6 @@ impl Instance {
       for cmd in project.phase.build.to_vec() {
         project.nix_shell(&self.path, cmd).status()?;
       }
-
-      for cmd in project.phase.start.to_vec() {
-        project.nix_shell(&self.path, cmd).status()?;
-      }
     }
 
     Ok(())
