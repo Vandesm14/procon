@@ -2,6 +2,7 @@ use std::{
   collections::HashMap,
   fs,
   path::{Path, PathBuf},
+  process::Command,
 };
 
 use clap::{Parser, Subcommand, command};
@@ -92,6 +93,14 @@ impl Instance {
   pub fn entrypoint(&self) -> Result<(), Box<dyn std::error::Error>> {
     for project in self.projects.values() {
       project.source.prepare(&self.path, &project.name)?;
+
+      for cmd in project.phase.build.to_vec() {
+        project.nix_shell(&self.path, cmd).status()?;
+      }
+
+      for cmd in project.phase.start.to_vec() {
+        project.nix_shell(&self.path, cmd).status()?;
+      }
     }
 
     Ok(())
@@ -109,6 +118,20 @@ struct Project {
   phase: Phases,
   #[serde(default)]
   env: HashMap<String, String>,
+}
+
+impl Project {
+  pub fn nix_shell(&self, path: &Path, cmd: String) -> Command {
+    let mut command = Command::new("nix-shell");
+    command
+      .current_dir(self.source.artifact_path(path, &self.name))
+      .arg("-p")
+      .args(self.deps.get("nix").unwrap_or(&Vec::new()))
+      .arg("--run")
+      .arg(cmd);
+
+    command
+  }
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
@@ -204,6 +227,16 @@ enum Cmds {
   None,
   Single(String),
   Many(Vec<String>),
+}
+
+impl Cmds {
+  pub fn to_vec(&self) -> Vec<String> {
+    match self {
+      Cmds::None => Vec::new(),
+      Cmds::Single(single) => vec![single.clone()],
+      Cmds::Many(items) => items.clone(),
+    }
+  }
 }
 
 fn main() {

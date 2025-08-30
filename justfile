@@ -10,4 +10,4 @@ build:
 
 # Open a shell directly in the container
 shell: build
-  docker run -it {{IMAGE_NAME}} nix-shell -p rustup toybox yazi
+  docker run -it {{IMAGE_NAME}} nix-shell -p yazi
