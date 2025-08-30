@@ -316,9 +316,14 @@ impl ServiceConfig {
         r#"[Service]
   DynamicUser=yes
   WorkingDirectory={}
-  ExecStart=/usr/bin/env bash -c \"{}\"
+  ExecStart=/usr/bin/env bash -c "{}"
   "#,
-        project.main_path(path).to_str().unwrap(),
+        project
+          .main_path(path)
+          .canonicalize()
+          .unwrap()
+          .to_str()
+          .unwrap(),
         cmds.join("&&"),
       );
       Some(template)
