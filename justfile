@@ -1,4 +1,4 @@
-IMAGE_NAME := "procon:dev"
+IMAGE_NAME := "procon"
 
 # Show available commands
 default:
@@ -9,5 +9,5 @@ build:
   docker build -t {{IMAGE_NAME}} .
 
 # Open a shell directly in the container
-run:
+shell:
   docker run -it {{IMAGE_NAME}} nix-shell -p rustup toybox
