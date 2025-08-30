@@ -1,6 +1,6 @@
 use std::{
   collections::HashMap,
-  fs,
+  fs::{self},
   path::{Path, PathBuf},
   process::{Command, ExitStatus},
 };
@@ -33,15 +33,10 @@ struct Cli {
 struct Instance {
   path: PathBuf,
 
-  modules: HashMap<String, Project>,
   projects: HashMap<String, Project>,
 }
 
 impl Instance {
-  pub fn modules_path(path: &Path) -> PathBuf {
-    path.join("modules")
-  }
-
   pub fn projects_path(path: &Path) -> PathBuf {
     path.join("projects")
   }
@@ -51,17 +46,6 @@ impl Instance {
   }
 
   pub fn from_path(path: PathBuf) -> Result<Self, Box<dyn std::error::Error>> {
-    let mut modules: Vec<Project> = Vec::new();
-    for file in WalkDir::new(Self::modules_path(&path))
-      .into_iter()
-      .filter_map(|e| e.ok())
-      .filter(|f| f.file_name().to_str().unwrap().ends_with(".toml"))
-    {
-      let module: Project =
-        toml::from_str(&fs::read_to_string(file.path()).unwrap()).unwrap();
-      modules.push(module);
-    }
-
     let mut projects: Vec<Project> = Vec::new();
     for file in WalkDir::new(Self::projects_path(&path))
       .into_iter()
@@ -75,15 +59,12 @@ impl Instance {
 
     let instance = Self {
       path,
-      modules: HashMap::from_iter(
-        modules.into_iter().map(|m| (m.name.clone(), m)),
-      ),
       projects: HashMap::from_iter(
         projects.into_iter().map(|p| (p.name.clone(), p)),
       ),
     };
 
-    println!("Loaded: {instance:?}");
+    println!("Loaded: {instance:#?}");
 
     Ok(instance)
   }
@@ -97,27 +78,32 @@ impl Instance {
     &self,
     filter: Vec<String>,
   ) -> Result<(), Box<dyn std::error::Error>> {
-    for project in self.projects.values().filter(|p| {
-      if filter.is_empty() {
-        true
-      } else {
-        filter.contains(&p.name)
-      }
+    for project in self.projects.values().filter(|p| match filter.is_empty() {
+      true => true,
+      false => filter.contains(&p.name),
     }) {
-      project.source.prepare(&self.path, &project.name)?;
-      for cmd in project.phase.build.to_vec() {
-        exit_status(
-          project.nix_shell(&self.path, &cmd).status()?,
-          &project.name,
-          &cmd,
-        );
-      }
-      for cmd in project.phase.start.to_vec() {
-        exit_status(
-          project.nix_shell(&self.path, &cmd).status()?,
-          &project.name,
-          &cmd,
-        );
+      project.source.prepare(project, &self.path)?;
+      // for cmd in project.phase.build.to_vec() {
+      //   exit_status(
+      //     project.nix_shell(&self.path, &cmd).status()?,
+      //     &project.name,
+      //     &cmd,
+      //   );
+      // }
+      // for cmd in project.phase.start.to_vec() {
+      //   exit_status(
+      //     project.nix_shell(&self.path, &cmd).status()?,
+      //     &project.name,
+      //     &cmd,
+      //   );
+      // }
+      if let Some(content) =
+        project.service.generate_service(project, &self.path)
+      {
+        fs::write(
+          project.main_path(&self.path).join("daemon.service"),
+          content,
+        )?;
       }
     }
 
@@ -141,10 +127,18 @@ struct Project {
 }
 
 impl Project {
+  pub fn main_path(&self, path: &Path) -> PathBuf {
+    path.join("artifacts").join(&self.name)
+  }
+
+  pub fn source_path(&self, path: &Path) -> PathBuf {
+    self.main_path(path).join("source")
+  }
+
   pub fn nix_shell(&self, path: &Path, cmd: &str) -> Command {
     let mut command = Command::new("nix-shell");
     command
-      .current_dir(self.source.artifact_path(path, &self.name))
+      .current_dir(self.source_path(path))
       .arg("-p")
       .args(self.deps.get("nix").unwrap_or(&Vec::new()))
       .arg("--run")
@@ -165,52 +159,32 @@ enum Source {
 }
 
 impl Source {
-  pub fn artifact_path(&self, path: &Path, project_name: &str) -> PathBuf {
-    path.join("artifacts").join(project_name).join("source")
-  }
-
-  pub fn exists(
-    &self,
-    path: &Path,
-    project_name: &str,
-  ) -> Result<bool, std::io::Error> {
-    fs::exists(self.artifact_path(path, project_name))
-  }
-
-  pub fn mkdir(
-    &self,
-    path: &Path,
-    project_name: &str,
-  ) -> Result<(), std::io::Error> {
-    fs::create_dir_all(self.artifact_path(path, project_name))
-  }
-
   pub fn prepare(
     &self,
+    project: &Project,
     path: &Path,
-    project_name: &str,
   ) -> Result<(), Box<dyn std::error::Error>> {
-    self.mkdir(path, project_name)?;
-    let artifact_path = self.artifact_path(path, project_name);
-    println!("Preparing: {} with {:?}", artifact_path.display(), self);
+    let source_path = project.source_path(path);
+    fs::create_dir_all(&source_path)?;
+    println!("Preparing: {} with {:?}", source_path.display(), self);
     match self {
       Source::None => return Ok(()),
       Source::Path(path_buf) => {
-        fs::copy(path_buf, artifact_path)?;
+        fs::copy(path_buf, source_path)?;
       }
       Source::Git(url) => {
         exit_status(
           Command::new("git")
             .arg("clone")
             .arg(url)
-            .arg(artifact_path)
+            .arg(source_path)
             .status()?,
-          project_name,
+          &project.name,
           &format!("git clone {}", url),
         );
       }
       Source::Zip(path_buf) => {
-        println!("unzip: {} {}", path_buf.display(), artifact_path.display());
+        println!("unzip: {} {}", path_buf.display(), source_path.display());
         exit_status(
           Command::new("nix-shell")
             .arg("-p")
@@ -219,14 +193,14 @@ impl Source {
             .arg(format!(
               "unzip -o {} -d {}",
               path_buf.display(),
-              artifact_path.display()
+              source_path.display()
             ))
             .status()?,
-          project_name,
+          &project.name,
           &format!(
             "unzip -o {} -d {}",
             path_buf.display(),
-            artifact_path.display()
+            source_path.display()
           ),
         );
       }
@@ -275,6 +249,14 @@ impl Cmds {
       Cmds::Many(items) => items.clone(),
     }
   }
+
+  pub fn to_option(&self) -> Option<Vec<String>> {
+    match self {
+      Cmds::None => None,
+      Cmds::Single(single) => Some(vec![single.clone()]),
+      Cmds::Many(items) => Some(items.clone()),
+    }
+  }
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
@@ -286,19 +268,64 @@ enum Service {
   Config(ServiceConfig),
 }
 
+impl Service {
+  pub fn generate_service(
+    &self,
+    project: &Project,
+    path: &Path,
+  ) -> Option<String> {
+    match self {
+      Service::None => None,
+      Service::File(path_buf) => fs::read_to_string(dbg!(path_buf)).ok(),
+      Service::Config(service_config) => {
+        service_config.generate_service(project, path)
+      }
+    }
+  }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 struct ServiceConfig {
   enable: bool,
   #[serde(default)]
-  dynamic_user: bool,
+  exec: Cmds,
+
+  #[serde(default)]
   working_directory: Option<PathBuf>,
   #[serde(default)]
-  exec_path: Option<PathBuf>,
-  #[serde(default)]
-  exec: Cmds,
+  dynamic_user: bool,
   #[serde(default)]
   restart_on: RestartOn,
+}
+
+impl ServiceConfig {
+  pub fn generate_service(
+    &self,
+    project: &Project,
+    path: &Path,
+  ) -> Option<String> {
+    println!("generating service for {}", project.name);
+    if self.enable {
+      let cmds = self
+        .exec
+        .to_option()
+        .or(project.phase.start.to_option())
+        .unwrap_or_default();
+      let template = format!(
+        r#"[Service]
+  DynamicUser=yes
+  WorkingDirectory={}
+  ExecStart=/usr/bin/env bash -c \"{}\"
+  "#,
+        project.main_path(path).to_str().unwrap(),
+        cmds.join("&&"),
+      );
+      Some(template)
+    } else {
+      None
+    }
+  }
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]

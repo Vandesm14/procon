@@ -10,4 +10,5 @@ build:
 
 # Open a shell directly in the container
 shell: build
-  docker run -it {{IMAGE_NAME}} nix-shell -p toybox
+  docker container rm -f {{IMAGE_NAME}}
+  docker run --name {{IMAGE_NAME}} -it {{IMAGE_NAME}} nix-shell -p toybox yazi
