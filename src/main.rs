@@ -1,5 +1,5 @@
 use std::{
-  collections::{BTreeMap, HashMap},
+  collections::{BTreeMap, HashMap, HashSet},
   fs::{self},
   path::{Path, PathBuf},
   process::{Command, ExitStatus},
@@ -31,6 +31,7 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
   Plan,
+  Apply,
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
@@ -102,7 +103,9 @@ impl Instance {
     Ok(changes)
   }
 
-  pub fn cmd_plan(&self) -> Result<(), Box<dyn std::error::Error>> {
+  pub fn plan(
+    &self,
+  ) -> Result<BTreeMap<Phase, Vec<String>>, Box<dyn std::error::Error>> {
     let changes = self.compare()?;
     let mut plan: BTreeMap<Phase, Vec<String>> = BTreeMap::new();
     for (name, change) in changes.into_iter() {
@@ -117,48 +120,62 @@ impl Instance {
       }
     }
 
-    println!("plan: {plan:#?}");
+    Ok(plan)
+  }
 
+  pub fn cmd_plan(&self) -> Result<(), Box<dyn std::error::Error>> {
+    let plan = self.plan();
+    println!("plan: {plan:#?}");
     Ok(())
   }
 
-  // pub fn entrypoint(
-  //   &self,
-  //   filter: Vec<String>,
-  // ) -> Result<(), Box<dyn std::error::Error>> {
-  //   for project in self.projects.values().filter(|p| match filter.is_empty() {
-  //     true => true,
-  //     false => filter.contains(&p.name),
-  //   }) {
-  //     project.source.prepare(project, &self.path)?;
-  //     for cmd in project.phase.build.to_vec() {
-  //       exit_status(
-  //         project.nix_shell(&self.path, &cmd).status()?,
-  //         &project.name,
-  //         &cmd,
-  //       );
-  //     }
-  //     // for cmd in project.phase.start.to_vec() {
-  //     //   exit_status(
-  //     //     project.nix_shell(&self.path, &cmd).status()?,
-  //     //     &project.name,
-  //     //     &cmd,
-  //     //   );
-  //     // }
-  //     if let Some(content) = project
-  //       .service
-  //       .as_ref()
-  //       .and_then(|s| s.generate_service(project, &self.path))
-  //     {
-  //       fs::write(
-  //         project.main_path(&self.path).join("daemon.service"),
-  //         content,
-  //       )?;
-  //     }
-  //   }
+  pub fn cmd_apply(&self) -> Result<(), Box<dyn std::error::Error>> {
+    let plan = self.plan()?;
+    let mut skip: HashSet<String> = HashSet::new();
 
-  //   Ok(())
-  // }
+    for (phase, names) in plan.iter() {
+      for project in names.iter().filter_map(|n| self.projects.get(n)) {
+        println!("{phase:?} {}", project.name);
+        match phase {
+          Phase::Setup => {
+            fs::create_dir_all(project.source_path(&self.path))?;
+            for cmd in project.phase.setup.to_vec() {
+              exit_status(
+                project.nix_shell(&self.path, &cmd).status()?,
+                &project.name,
+                &cmd,
+              );
+            }
+          }
+          Phase::Install => {
+            project.source.install(project, &self.path)?;
+            for cmd in project.phase.install.to_vec() {
+              exit_status(
+                project.nix_shell(&self.path, &cmd).status()?,
+                &project.name,
+                &cmd,
+              );
+            }
+          }
+          Phase::Update => todo!(),
+          Phase::Build => {
+            for cmd in project.phase.build.to_vec() {
+              exit_status(
+                project.nix_shell(&self.path, &cmd).status()?,
+                &project.name,
+                &cmd,
+              );
+            }
+          }
+          Phase::Start => todo!(),
+          Phase::Stop => todo!(),
+          Phase::Teardown => todo!(),
+        }
+      }
+    }
+
+    Ok(())
+  }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Hash)]
@@ -237,14 +254,12 @@ enum Source {
 }
 
 impl Source {
-  pub fn prepare(
+  pub fn install(
     &self,
     project: &Project,
     path: &Path,
   ) -> Result<(), Box<dyn std::error::Error>> {
     let source_path = project.source_path(path);
-    fs::create_dir_all(&source_path)?;
-    println!("Preparing: {} with {:?}", source_path.display(), self);
     match self {
       Source::None => return Ok(()),
       Source::Path(path_buf) => {
@@ -262,7 +277,6 @@ impl Source {
         );
       }
       Source::Zip(path_buf) => {
-        println!("unzip: {} {}", path_buf.display(), source_path.display());
         exit_status(
           Command::new("nix-shell")
             .arg("-p")
@@ -354,7 +368,6 @@ impl ServiceConfig {
     project: &Project,
     path: &Path,
   ) -> Option<String> {
-    println!("generating service for {}", project.name);
     if let Some(cmds) = project.phase.start.to_option()
       && self.enable
     {
@@ -395,5 +408,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
   match cli.command {
     Commands::Plan => instance.cmd_plan(),
+    Commands::Apply => instance.cmd_apply(),
   }
 }
