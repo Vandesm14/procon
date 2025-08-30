@@ -1,8 +1,6 @@
 name = "portfolio"
 
 source.git = "https://github.com/vandesm14/vandesm14"
-# source.path = "."
-# souce.zip = "$HOME/downloads/my-project.zip"
 
 deps.modules = []
 deps.nix = ["deno", "miniserve"]

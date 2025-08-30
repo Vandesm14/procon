@@ -5,19 +5,13 @@ use std::{
   process::Command,
 };
 
-use clap::{Parser, Subcommand, command};
+use clap::{Parser, command};
 use serde::{Deserialize, Serialize};
 
 #[derive(Parser)]
 #[command(author, version, about)]
 struct Cli {
-  #[command(subcommand)]
-  cmd: Commands,
-}
-
-#[derive(Subcommand)]
-enum Commands {
-  Debug { path: Option<PathBuf> },
+  projects: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
@@ -29,18 +23,6 @@ struct Instance {
 }
 
 impl Instance {
-  pub fn new(path: PathBuf) -> Self {
-    Self {
-      path,
-      modules: HashMap::new(),
-      projects: HashMap::new(),
-    }
-  }
-
-  pub fn artifacts_path(path: &Path) -> PathBuf {
-    path.join("artifacts")
-  }
-
   pub fn modules_path(path: &Path) -> PathBuf {
     path.join("modules")
   }
@@ -58,6 +40,7 @@ impl Instance {
     for file in fs::read_dir(Self::modules_path(&path))
       .unwrap()
       .filter_map(|e| e.ok())
+      .filter(|f| f.file_name().to_str().unwrap().ends_with(".toml"))
     {
       let module: Project =
         toml::from_str(&fs::read_to_string(file.path()).unwrap()).unwrap();
@@ -68,13 +51,14 @@ impl Instance {
     for file in fs::read_dir(Self::projects_path(&path))
       .unwrap()
       .filter_map(|e| e.ok())
+      .filter(|f| f.file_name().to_str().unwrap().ends_with(".toml"))
     {
       let project: Project =
         toml::from_str(&fs::read_to_string(file.path()).unwrap()).unwrap();
       projects.push(project);
     }
 
-    Ok(Self {
+    let instance = Self {
       path,
       modules: HashMap::from_iter(
         modules.into_iter().map(|m| (m.name.clone(), m)),
@@ -82,7 +66,11 @@ impl Instance {
       projects: HashMap::from_iter(
         projects.into_iter().map(|p| (p.name.clone(), p)),
       ),
-    })
+    };
+
+    println!("Loaded: {instance:?}");
+
+    Ok(instance)
   }
 
   pub fn write_state(&self) -> Result<(), Box<dyn std::error::Error>> {
@@ -90,8 +78,11 @@ impl Instance {
     Ok(())
   }
 
-  pub fn entrypoint(&self) -> Result<(), Box<dyn std::error::Error>> {
-    for project in self.projects.values() {
+  pub fn entrypoint(
+    &self,
+    filter: Vec<String>,
+  ) -> Result<(), Box<dyn std::error::Error>> {
+    for project in self.projects.values().filter(|p| filter.contains(&p.name)) {
       project.source.prepare(&self.path, &project.name)?;
 
       for cmd in project.phase.build.to_vec() {
@@ -168,24 +159,30 @@ impl Source {
   ) -> Result<(), Box<dyn std::error::Error>> {
     self.mkdir(path, project_name)?;
     let artifact_path = self.artifact_path(path, project_name);
+    println!("Preparing: {} with {:?}", artifact_path.display(), self);
     match self {
       Source::None => return Ok(()),
       Source::Path(path_buf) => {
         fs::copy(path_buf, artifact_path)?;
       }
       Source::Git(url) => {
-        std::process::Command::new("git")
+        Command::new("git")
           .arg("clone")
           .arg(url)
           .arg(artifact_path)
           .status()?;
       }
       Source::Zip(path_buf) => {
-        fs::copy(path_buf, &artifact_path)?;
-        std::process::Command::new("unzip")
-          .arg(path_buf)
-          .arg("-d")
-          .arg(artifact_path)
+        println!("unzip: {} {}", path_buf.display(), artifact_path.display());
+        Command::new("nix-shell")
+          .arg("-p")
+          .arg("unzip")
+          .arg("--run")
+          .arg(format!(
+            "unzip -o {} -d {}",
+            path_buf.display(),
+            artifact_path.display()
+          ))
           .status()?;
       }
     }
@@ -237,12 +234,8 @@ impl Cmds {
 
 fn main() {
   let cli = Cli::parse();
-  match cli.cmd {
-    Commands::Debug { path } => {
-      let path = path.unwrap_or(".".into());
-      let instance = Instance::from_path(path).unwrap();
-      instance.entrypoint().unwrap();
-      instance.write_state().unwrap();
-    }
-  }
+  let path: PathBuf = ".".into();
+  let instance = Instance::from_path(path).unwrap();
+  instance.entrypoint(cli.projects).unwrap();
+  instance.write_state().unwrap();
 }
