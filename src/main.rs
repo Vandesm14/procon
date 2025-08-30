@@ -2,9 +2,7 @@ use std::{
   collections::BTreeMap,
   fs,
   hash::{DefaultHasher, Hash, Hasher},
-  io::Write,
   path::PathBuf,
-  sync::Arc,
 };
 
 use clap::{Parser, Subcommand, command};
@@ -67,21 +65,18 @@ impl Instance {
       };
 
     let mut modules: Vec<Project> = Vec::new();
-    for path in fs::read_dir(self.modules_path())?
-      .filter_map(|e| e.ok().map(|e| e.path()))
-    {
-      let module: Project = toml::from_str(&fs::read_to_string(path.clone())?)?;
-      current_hashes.add_module(path, hash_once(module.clone()));
+    for file in fs::read_dir(self.modules_path())?.filter_map(|e| e.ok()) {
+      let module: Project = toml::from_str(&fs::read_to_string(file.path())?)?;
+      current_hashes
+        .add_module(file.file_name().into(), hash_once(module.clone()));
       modules.push(module);
     }
 
     let mut projects: Vec<Project> = Vec::new();
-    for path in fs::read_dir(self.projects_path())?
-      .filter_map(|e| e.ok().map(|e| e.path()))
-    {
-      let project: Project =
-        toml::from_str(&fs::read_to_string(path.clone())?)?;
-      current_hashes.add_project(path, hash_once(project.clone()));
+    for file in fs::read_dir(self.projects_path())?.filter_map(|e| e.ok()) {
+      let project: Project = toml::from_str(&fs::read_to_string(file.path())?)?;
+      current_hashes
+        .add_project(file.file_name().into(), hash_once(project.clone()));
       projects.push(project);
     }
 

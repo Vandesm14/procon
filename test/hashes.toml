@@ -1,6 +1,6 @@
 [modules]
-"test/modules/rust.toml" = "12881447405769828544"
+"rust.toml" = "12881447405769828544"
 
 [projects]
-"test/projects/airwave.toml" = "1618087855186191783"
-"test/projects/thedevbird.toml" = "7722877744916597434"
+"airwave.toml" = "1618087855186191783"
+"thedevbird.toml" = "7722877744916597434"
