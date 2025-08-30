@@ -1,4 +1,8 @@
-use std::{collections::HashMap, fs, path::PathBuf};
+use std::{
+  collections::HashMap,
+  fs,
+  path::{Path, PathBuf},
+};
 
 use clap::{Parser, Subcommand, command};
 use serde::{Deserialize, Serialize};
@@ -32,25 +36,25 @@ impl Instance {
     }
   }
 
-  pub fn artifacts_path(&self) -> PathBuf {
-    self.path.join("artifacts")
+  pub fn artifacts_path(path: &Path) -> PathBuf {
+    path.join("artifacts")
   }
 
-  pub fn modules_path(&self) -> PathBuf {
-    self.path.join("modules")
+  pub fn modules_path(path: &Path) -> PathBuf {
+    path.join("modules")
   }
 
-  pub fn projects_path(&self) -> PathBuf {
-    self.path.join("projects")
+  pub fn projects_path(path: &Path) -> PathBuf {
+    path.join("projects")
   }
 
-  pub fn state_path(&self) -> PathBuf {
-    self.path.join("state.toml")
+  pub fn state_path(path: &Path) -> PathBuf {
+    path.join("state.ron")
   }
 
-  pub fn read_from_path(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+  pub fn from_path(path: PathBuf) -> Result<Self, Box<dyn std::error::Error>> {
     let mut modules: Vec<Project> = Vec::new();
-    for file in fs::read_dir(self.modules_path())
+    for file in fs::read_dir(Self::modules_path(&path))
       .unwrap()
       .filter_map(|e| e.ok())
     {
@@ -60,7 +64,7 @@ impl Instance {
     }
 
     let mut projects: Vec<Project> = Vec::new();
-    for file in fs::read_dir(self.projects_path())
+    for file in fs::read_dir(Self::projects_path(&path))
       .unwrap()
       .filter_map(|e| e.ok())
     {
@@ -69,29 +73,25 @@ impl Instance {
       projects.push(project);
     }
 
-    self.modules =
-      HashMap::from_iter(modules.into_iter().map(|m| (m.name.clone(), m)));
-    self.projects =
-      HashMap::from_iter(projects.into_iter().map(|p| (p.name.clone(), p)));
-
-    Ok(())
+    Ok(Self {
+      path,
+      modules: HashMap::from_iter(
+        modules.into_iter().map(|m| (m.name.clone(), m)),
+      ),
+      projects: HashMap::from_iter(
+        projects.into_iter().map(|p| (p.name.clone(), p)),
+      ),
+    })
   }
 
   pub fn write_state(&self) -> Result<(), Box<dyn std::error::Error>> {
-    fs::write(self.state_path(), ron::to_string(self)?)?;
+    fs::write(Self::state_path(&self.path), ron::to_string(self)?)?;
     Ok(())
   }
 
   pub fn entrypoint(&self) -> Result<(), Box<dyn std::error::Error>> {
     todo!()
   }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-enum Status {
-  Added,
-  Removed,
-  Changed,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -153,8 +153,7 @@ fn main() {
   match cli.cmd {
     Commands::Debug { path } => {
       let path = path.unwrap_or(".".into());
-      let mut instance = Instance::new(path);
-      instance.read_from_path().unwrap();
+      let instance = Instance::from_path(path).unwrap();
       instance.write_state().unwrap();
     }
   }
