@@ -1,9 +1,0 @@
-name = "airwave"
-
-source.zip = "projects/airwave.zip"
-
-# deps.modules = ["rust"]
-deps.nix = ["just", "mprocs", "rustup"]
-
-phase.build = "cargo build"
-phase.start = "just dev"
