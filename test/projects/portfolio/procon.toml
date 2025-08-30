@@ -1,9 +1,0 @@
-name = "portfolio"
-
-source.git = "https://github.com/vandesm14/vandesm14"
-
-deps.modules = []
-deps.nix = ["deno", "miniserve"]
-
-phase.build = "deno run --allow-all src/build.ts"
-phase.start = "miniserve dist -p 3000 --index index.html"
