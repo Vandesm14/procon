@@ -13,6 +13,10 @@ use walkdir::WalkDir;
 #[command(author, version, about)]
 struct Cli {
   projects: Vec<String>,
+  #[arg(short, long)]
+  path: Option<PathBuf>,
+  #[arg(short, long)]
+  exec: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
@@ -111,6 +115,8 @@ struct Project {
   phase: Phases,
   #[serde(default)]
   env: HashMap<String, String>,
+  #[serde(default)]
+  service: Service,
 }
 
 impl Project {
@@ -238,10 +244,45 @@ impl Cmds {
   }
 }
 
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[serde(untagged)]
+enum Service {
+  #[default]
+  None,
+  File(PathBuf),
+  Config(ServiceConfig),
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+struct ServiceConfig {
+  enable: bool,
+  #[serde(default)]
+  dynamic_user: bool,
+  working_directory: Option<PathBuf>,
+  #[serde(default)]
+  exec_path: Option<PathBuf>,
+  #[serde(default)]
+  exec: Cmds,
+  #[serde(default)]
+  restart_on: RestartOn,
+}
+
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+enum RestartOn {
+  Always,
+  #[default]
+  Never,
+  OnFailure,
+}
+
 fn main() {
   let cli = Cli::parse();
-  let path: PathBuf = ".".into();
+  let path: PathBuf = cli.path.unwrap_or(".".into());
   let instance = Instance::from_path(path).unwrap();
-  instance.entrypoint(cli.projects).unwrap();
+  if cli.exec {
+    instance.entrypoint(cli.projects).unwrap();
+  }
   instance.write_state().unwrap();
 }
