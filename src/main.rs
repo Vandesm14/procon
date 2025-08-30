@@ -2,12 +2,22 @@ use std::{
   collections::HashMap,
   fs,
   path::{Path, PathBuf},
-  process::Command,
+  process::{Command, ExitStatus},
 };
 
 use clap::{Parser, command};
 use serde::{Deserialize, Serialize};
 use walkdir::WalkDir;
+
+fn exit_status(status: ExitStatus, project_name: &str, cmd: &str) {
+  if let Some(code) = status.code()
+    && code != 0
+  {
+    panic!(
+      "Project {project_name} failed to run command: {cmd} with exit code: {code}"
+    );
+  }
+}
 
 #[derive(Parser)]
 #[command(author, version, about)]
@@ -96,7 +106,18 @@ impl Instance {
     }) {
       project.source.prepare(&self.path, &project.name)?;
       for cmd in project.phase.build.to_vec() {
-        project.nix_shell(&self.path, cmd).status()?;
+        exit_status(
+          project.nix_shell(&self.path, &cmd).status()?,
+          &project.name,
+          &cmd,
+        );
+      }
+      for cmd in project.phase.start.to_vec() {
+        exit_status(
+          project.nix_shell(&self.path, &cmd).status()?,
+          &project.name,
+          &cmd,
+        );
       }
     }
 
@@ -120,7 +141,7 @@ struct Project {
 }
 
 impl Project {
-  pub fn nix_shell(&self, path: &Path, cmd: String) -> Command {
+  pub fn nix_shell(&self, path: &Path, cmd: &str) -> Command {
     let mut command = Command::new("nix-shell");
     command
       .current_dir(self.source.artifact_path(path, &self.name))
@@ -178,24 +199,36 @@ impl Source {
         fs::copy(path_buf, artifact_path)?;
       }
       Source::Git(url) => {
-        Command::new("git")
-          .arg("clone")
-          .arg(url)
-          .arg(artifact_path)
-          .status()?;
+        exit_status(
+          Command::new("git")
+            .arg("clone")
+            .arg(url)
+            .arg(artifact_path)
+            .status()?,
+          project_name,
+          &format!("git clone {}", url),
+        );
       }
       Source::Zip(path_buf) => {
         println!("unzip: {} {}", path_buf.display(), artifact_path.display());
-        Command::new("nix-shell")
-          .arg("-p")
-          .arg("unzip")
-          .arg("--run")
-          .arg(format!(
+        exit_status(
+          Command::new("nix-shell")
+            .arg("-p")
+            .arg("unzip")
+            .arg("--run")
+            .arg(format!(
+              "unzip -o {} -d {}",
+              path_buf.display(),
+              artifact_path.display()
+            ))
+            .status()?,
+          project_name,
+          &format!(
             "unzip -o {} -d {}",
             path_buf.display(),
             artifact_path.display()
-          ))
-          .status()?;
+          ),
+        );
       }
     }
 
