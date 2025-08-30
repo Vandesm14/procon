@@ -2,7 +2,9 @@ use std::{
   collections::BTreeMap,
   fs,
   hash::{DefaultHasher, Hash, Hasher},
+  io::Write,
   path::PathBuf,
+  sync::Arc,
 };
 
 use clap::{Parser, Subcommand, command};
@@ -21,12 +23,95 @@ enum Commands {
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
-struct Generations {
+struct Instance {
+  path: PathBuf,
+
+  modules: Vec<Project>,
+  projects: Vec<Project>,
+
+  existing_hashes: Hashes,
+  current_hashes: Hashes,
+}
+
+impl Instance {
+  pub fn new(path: PathBuf) -> Self {
+    Self {
+      path,
+      modules: Vec::new(),
+      projects: Vec::new(),
+      existing_hashes: Hashes::new(),
+      current_hashes: Hashes::new(),
+    }
+  }
+
+  pub fn modules_path(&self) -> PathBuf {
+    self.path.join("modules")
+  }
+
+  pub fn projects_path(&self) -> PathBuf {
+    self.path.join("projects")
+  }
+
+  pub fn hashes_path(&self) -> PathBuf {
+    self.path.join("hashes.toml")
+  }
+
+  pub fn read_from_path(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+    let mut current_hashes = Hashes::new();
+    let existing_hashes: Hashes =
+      if fs::exists(self.hashes_path()).is_ok_and(|x| x) {
+        let str = fs::read_to_string(self.hashes_path()).unwrap();
+        toml::from_str(&str)?
+      } else {
+        Hashes::new()
+      };
+
+    let mut modules: Vec<Project> = Vec::new();
+    for path in fs::read_dir(self.modules_path())?
+      .filter_map(|e| e.ok().map(|e| e.path()))
+    {
+      let module: Project = toml::from_str(&fs::read_to_string(path.clone())?)?;
+      current_hashes.add_module(path, hash_once(module.clone()));
+      modules.push(module);
+    }
+
+    let mut projects: Vec<Project> = Vec::new();
+    for path in fs::read_dir(self.projects_path())?
+      .filter_map(|e| e.ok().map(|e| e.path()))
+    {
+      let project: Project =
+        toml::from_str(&fs::read_to_string(path.clone())?)?;
+      current_hashes.add_project(path, hash_once(project.clone()));
+      projects.push(project);
+    }
+
+    self.modules = modules;
+    self.projects = projects;
+    self.existing_hashes = existing_hashes;
+    self.current_hashes = current_hashes;
+
+    Ok(())
+  }
+
+  pub fn compare_hashes(&self) -> Vec<(PathBuf, Status)> {
+    self.existing_hashes.compare(&self.current_hashes)
+  }
+
+  pub fn write_hashes(&self) -> Result<(), std::io::Error> {
+    fs::write(
+      self.hashes_path(),
+      toml::to_string(&self.current_hashes).unwrap(),
+    )
+  }
+}
+
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+struct Hashes {
   modules: BTreeMap<PathBuf, String>,
   projects: BTreeMap<PathBuf, String>,
 }
 
-impl Generations {
+impl Hashes {
   pub fn new() -> Self {
     Self {
       modules: BTreeMap::new(),
@@ -156,47 +241,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
   match cli.cmd {
     Commands::Debug { path } => {
       let path = path.unwrap_or(".".into());
-      let modules_path = path.join("modules");
-      let projects_path = path.join("projects");
-      let generations_path = path.join("generations.toml");
+      let mut instance = Instance::new(path);
+      instance.read_from_path()?;
 
-      let generations: Generations =
-        if fs::exists(&generations_path).is_ok_and(|x| x) {
-          let str = fs::read_to_string(&generations_path).unwrap();
-          toml::from_str(&str)?
-        } else {
-          Generations::new()
-        };
+      println!("{:?}", instance.compare_hashes());
 
-      let mut new_generations = Generations::new();
-      println!("modules:");
-      for path in
-        fs::read_dir(modules_path)?.filter_map(|e| e.ok().map(|e| e.path()))
-      {
-        let module: Project =
-          toml::from_str(&fs::read_to_string(path.clone())?)?;
-        let hash = hash_once(&module);
-        println!("hash: {hash}, module: {module:?}");
-
-        new_generations.add_module(path, hash);
-      }
-
-      println!();
-      println!("projects:");
-      for path in
-        fs::read_dir(projects_path)?.filter_map(|e| e.ok().map(|e| e.path()))
-      {
-        let project: Project =
-          toml::from_str(&fs::read_to_string(path.clone())?)?;
-        let hash = hash_once(&project);
-        println!("hash: {hash}, project: {project:?}");
-        new_generations.add_project(path, hash);
-      }
-
-      println!();
-      println!("changes: {:?}", new_generations.compare(&generations));
-
-      fs::write(generations_path, toml::to_string(&new_generations)?)?
+      instance.write_hashes()?;
     }
   }
 
