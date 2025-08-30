@@ -7,6 +7,7 @@ use std::{
 
 use clap::{Parser, command};
 use serde::{Deserialize, Serialize};
+use walkdir::WalkDir;
 
 #[derive(Parser)]
 #[command(author, version, about)]
@@ -37,8 +38,8 @@ impl Instance {
 
   pub fn from_path(path: PathBuf) -> Result<Self, Box<dyn std::error::Error>> {
     let mut modules: Vec<Project> = Vec::new();
-    for file in fs::read_dir(Self::modules_path(&path))
-      .unwrap()
+    for file in WalkDir::new(Self::modules_path(&path))
+      .into_iter()
       .filter_map(|e| e.ok())
       .filter(|f| f.file_name().to_str().unwrap().ends_with(".toml"))
     {
@@ -48,8 +49,8 @@ impl Instance {
     }
 
     let mut projects: Vec<Project> = Vec::new();
-    for file in fs::read_dir(Self::projects_path(&path))
-      .unwrap()
+    for file in WalkDir::new(Self::projects_path(&path))
+      .into_iter()
       .filter_map(|e| e.ok())
       .filter(|f| f.file_name().to_str().unwrap().ends_with(".toml"))
     {
@@ -82,9 +83,14 @@ impl Instance {
     &self,
     filter: Vec<String>,
   ) -> Result<(), Box<dyn std::error::Error>> {
-    for project in self.projects.values().filter(|p| filter.contains(&p.name)) {
+    for project in self.projects.values().filter(|p| {
+      if filter.is_empty() {
+        true
+      } else {
+        filter.contains(&p.name)
+      }
+    }) {
       project.source.prepare(&self.path, &project.name)?;
-
       for cmd in project.phase.build.to_vec() {
         project.nix_shell(&self.path, cmd).status()?;
       }
@@ -133,7 +139,7 @@ enum Source {
 
 impl Source {
   pub fn artifact_path(&self, path: &Path, project_name: &str) -> PathBuf {
-    path.join("artifacts").join(project_name)
+    path.join("artifacts").join(project_name).join("source")
   }
 
   pub fn exists(
@@ -195,10 +201,10 @@ impl Source {
 struct Phases {
   /// Runs once, before source and deps are installed.
   #[serde(default)]
-  install: Cmds,
+  setup: Cmds,
   /// Runs once, after the source and deps are installed.
   #[serde(default)]
-  setup: Cmds,
+  install: Cmds,
   /// Runs on an update trigger.
   #[serde(default)]
   update: Cmds,
