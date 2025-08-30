@@ -1,3 +1,5 @@
+name = "airwave"
+
 source.git = "https://github.com/vandesm14/airwave"
 # source.path = "."
 # souce.zip = "$HOME/downloads/my-project.zip"

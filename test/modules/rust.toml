@@ -1,3 +1,5 @@
+name = "rust"
+
 deps.nix = ["rustup", "sccache"]
 
 phase.setup = "rustup install stable"

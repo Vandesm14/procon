@@ -1,9 +1,4 @@
-use std::{
-  collections::BTreeMap,
-  fs,
-  hash::{DefaultHasher, Hash, Hasher},
-  path::PathBuf,
-};
+use std::{collections::HashMap, fs, path::PathBuf};
 
 use clap::{Parser, Subcommand, command};
 use serde::{Deserialize, Serialize};
@@ -24,22 +19,21 @@ enum Commands {
 struct Instance {
   path: PathBuf,
 
-  modules: Vec<Project>,
-  projects: Vec<Project>,
-
-  existing_hashes: Hashes,
-  current_hashes: Hashes,
+  modules: HashMap<String, Project>,
+  projects: HashMap<String, Project>,
 }
 
 impl Instance {
   pub fn new(path: PathBuf) -> Self {
     Self {
       path,
-      modules: Vec::new(),
-      projects: Vec::new(),
-      existing_hashes: Hashes::new(),
-      current_hashes: Hashes::new(),
+      modules: HashMap::new(),
+      projects: HashMap::new(),
     }
+  }
+
+  pub fn artifacts_path(&self) -> PathBuf {
+    self.path.join("artifacts")
   }
 
   pub fn modules_path(&self) -> PathBuf {
@@ -50,115 +44,46 @@ impl Instance {
     self.path.join("projects")
   }
 
-  pub fn hashes_path(&self) -> PathBuf {
-    self.path.join("hashes.toml")
+  pub fn state_path(&self) -> PathBuf {
+    self.path.join("state.toml")
   }
 
   pub fn read_from_path(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-    let mut current_hashes = Hashes::new();
-    let existing_hashes: Hashes =
-      if fs::exists(self.hashes_path()).is_ok_and(|x| x) {
-        let str = fs::read_to_string(self.hashes_path()).unwrap();
-        toml::from_str(&str)?
-      } else {
-        Hashes::new()
-      };
-
     let mut modules: Vec<Project> = Vec::new();
-    for file in fs::read_dir(self.modules_path())?.filter_map(|e| e.ok()) {
-      let module: Project = toml::from_str(&fs::read_to_string(file.path())?)?;
-      current_hashes
-        .add_module(file.file_name().into(), hash_once(module.clone()));
+    for file in fs::read_dir(self.modules_path())
+      .unwrap()
+      .filter_map(|e| e.ok())
+    {
+      let module: Project =
+        toml::from_str(&fs::read_to_string(file.path()).unwrap()).unwrap();
       modules.push(module);
     }
 
     let mut projects: Vec<Project> = Vec::new();
-    for file in fs::read_dir(self.projects_path())?.filter_map(|e| e.ok()) {
-      let project: Project = toml::from_str(&fs::read_to_string(file.path())?)?;
-      current_hashes
-        .add_project(file.file_name().into(), hash_once(project.clone()));
+    for file in fs::read_dir(self.projects_path())
+      .unwrap()
+      .filter_map(|e| e.ok())
+    {
+      let project: Project =
+        toml::from_str(&fs::read_to_string(file.path()).unwrap()).unwrap();
       projects.push(project);
     }
 
-    self.modules = modules;
-    self.projects = projects;
-    self.existing_hashes = existing_hashes;
-    self.current_hashes = current_hashes;
+    self.modules =
+      HashMap::from_iter(modules.into_iter().map(|m| (m.name.clone(), m)));
+    self.projects =
+      HashMap::from_iter(projects.into_iter().map(|p| (p.name.clone(), p)));
 
     Ok(())
   }
 
-  pub fn compare_hashes(&self) -> Vec<(PathBuf, Status)> {
-    self.existing_hashes.compare(&self.current_hashes)
+  pub fn write_state(&self) -> Result<(), Box<dyn std::error::Error>> {
+    fs::write(self.state_path(), ron::to_string(self)?)?;
+    Ok(())
   }
 
-  pub fn write_hashes(&self) -> Result<(), std::io::Error> {
-    fs::write(
-      self.hashes_path(),
-      toml::to_string(&self.current_hashes).unwrap(),
-    )
-  }
-}
-
-#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
-struct Hashes {
-  modules: BTreeMap<PathBuf, String>,
-  projects: BTreeMap<PathBuf, String>,
-}
-
-impl Hashes {
-  pub fn new() -> Self {
-    Self {
-      modules: BTreeMap::new(),
-      projects: BTreeMap::new(),
-    }
-  }
-
-  pub fn add_module(&mut self, module: PathBuf, hash: u64) {
-    self.modules.insert(module, hash.to_string());
-  }
-
-  pub fn add_project(&mut self, project: PathBuf, hash: u64) {
-    self.projects.insert(project, hash.to_string());
-  }
-
-  fn compare_list(
-    some: &BTreeMap<PathBuf, String>,
-    other: &BTreeMap<PathBuf, String>,
-  ) -> Vec<(PathBuf, Status)> {
-    let mut changes: Vec<(PathBuf, Status)> = Vec::new();
-    for (path, hash) in some.iter() {
-      if let Some(other_project) = other.get(path) {
-        if hash != other_project {
-          changes.push((path.clone(), Status::Changed));
-        }
-      } else {
-        changes.push((path.clone(), Status::Added));
-      }
-    }
-
-    for (path, _) in other.iter() {
-      if !some.contains_key(path) {
-        changes.push((path.clone(), Status::Removed));
-      }
-    }
-
-    changes
-  }
-
-  pub fn compare_modules(&self, other: &Self) -> Vec<(PathBuf, Status)> {
-    Self::compare_list(&self.modules, &other.modules)
-  }
-
-  pub fn compare_projects(&self, other: &Self) -> Vec<(PathBuf, Status)> {
-    Self::compare_list(&self.projects, &other.projects)
-  }
-
-  pub fn compare(&self, other: &Self) -> Vec<(PathBuf, Status)> {
-    let mut changes = Vec::new();
-    changes.extend(self.compare_modules(other));
-    changes.extend(self.compare_projects(other));
-    changes
+  pub fn entrypoint(&self) -> Result<(), Box<dyn std::error::Error>> {
+    todo!()
   }
 }
 
@@ -169,19 +94,20 @@ enum Status {
   Changed,
 }
 
-#[derive(Debug, Clone, PartialEq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 struct Project {
+  name: String,
   #[serde(default)]
   source: Source,
   #[serde(default)]
-  deps: BTreeMap<String, Vec<String>>,
+  deps: HashMap<String, Vec<String>>,
   #[serde(default)]
   phase: Phases,
   #[serde(default)]
-  env: BTreeMap<String, String>,
+  env: HashMap<String, String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Hash, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 enum Source {
   #[default]
@@ -191,7 +117,7 @@ enum Source {
   Zip(PathBuf),
 }
 
-#[derive(Debug, Clone, PartialEq, Hash, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 struct Phases {
   /// Runs once, before source and deps are installed.
   #[serde(default)]
@@ -213,7 +139,7 @@ struct Phases {
   stop: Cmds,
 }
 
-#[derive(Debug, Clone, PartialEq, Hash, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 #[serde(untagged)]
 enum Cmds {
   #[default]
@@ -222,28 +148,14 @@ enum Cmds {
   Many(Vec<String>),
 }
 
-fn hash_once<T>(hashable: T) -> u64
-where
-  T: Hash,
-{
-  let mut hasher = DefaultHasher::new();
-  hashable.hash(&mut hasher);
-  hasher.finish()
-}
-
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() {
   let cli = Cli::parse();
   match cli.cmd {
     Commands::Debug { path } => {
       let path = path.unwrap_or(".".into());
       let mut instance = Instance::new(path);
-      instance.read_from_path()?;
-
-      println!("{:?}", instance.compare_hashes());
-
-      instance.write_hashes()?;
+      instance.read_from_path().unwrap();
+      instance.write_state().unwrap();
     }
   }
-
-  Ok(())
 }

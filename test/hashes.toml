@@ -1,6 +1,0 @@
-[modules]
-"rust.toml" = "12881447405769828544"
-
-[projects]
-"airwave.toml" = "1618087855186191783"
-"thedevbird.toml" = "7722877744916597434"
