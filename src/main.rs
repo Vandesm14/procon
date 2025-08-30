@@ -90,7 +90,11 @@ impl Instance {
   }
 
   pub fn entrypoint(&self) -> Result<(), Box<dyn std::error::Error>> {
-    todo!()
+    for project in self.projects.values() {
+      project.source.prepare(&self.path, &project.name)?;
+    }
+
+    Ok(())
   }
 }
 
@@ -115,6 +119,60 @@ enum Source {
   Path(PathBuf),
   Git(String),
   Zip(PathBuf),
+}
+
+impl Source {
+  pub fn artifact_path(&self, path: &Path, project_name: &str) -> PathBuf {
+    path.join("artifacts").join(project_name)
+  }
+
+  pub fn exists(
+    &self,
+    path: &Path,
+    project_name: &str,
+  ) -> Result<bool, std::io::Error> {
+    fs::exists(self.artifact_path(path, project_name))
+  }
+
+  pub fn mkdir(
+    &self,
+    path: &Path,
+    project_name: &str,
+  ) -> Result<(), std::io::Error> {
+    fs::create_dir_all(self.artifact_path(path, project_name))
+  }
+
+  pub fn prepare(
+    &self,
+    path: &Path,
+    project_name: &str,
+  ) -> Result<(), Box<dyn std::error::Error>> {
+    self.mkdir(path, project_name)?;
+    let artifact_path = self.artifact_path(path, project_name);
+    match self {
+      Source::None => return Ok(()),
+      Source::Path(path_buf) => {
+        fs::copy(path_buf, artifact_path)?;
+      }
+      Source::Git(url) => {
+        std::process::Command::new("git")
+          .arg("clone")
+          .arg(url)
+          .arg(artifact_path)
+          .status()?;
+      }
+      Source::Zip(path_buf) => {
+        fs::copy(path_buf, &artifact_path)?;
+        std::process::Command::new("unzip")
+          .arg(path_buf)
+          .arg("-d")
+          .arg(artifact_path)
+          .status()?;
+      }
+    }
+
+    Ok(())
+  }
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
@@ -154,6 +212,7 @@ fn main() {
     Commands::Debug { path } => {
       let path = path.unwrap_or(".".into());
       let instance = Instance::from_path(path).unwrap();
+      instance.entrypoint().unwrap();
       instance.write_state().unwrap();
     }
   }
