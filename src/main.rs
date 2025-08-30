@@ -1,11 +1,11 @@
 use std::{
-  collections::HashMap,
+  collections::{BTreeMap, HashMap},
   fs::{self},
   path::{Path, PathBuf},
   process::{Command, ExitStatus},
 };
 
-use clap::{Parser, command};
+use clap::{Parser, Subcommand, command};
 use serde::{Deserialize, Serialize};
 use walkdir::WalkDir;
 
@@ -22,17 +22,20 @@ fn exit_status(status: ExitStatus, project_name: &str, cmd: &str) {
 #[derive(Parser)]
 #[command(author, version, about)]
 struct Cli {
-  projects: Vec<String>,
   #[arg(short, long)]
   path: Option<PathBuf>,
-  #[arg(short, long)]
-  exec: bool,
+  #[command(subcommand)]
+  command: Commands,
+}
+
+#[derive(Subcommand)]
+enum Commands {
+  Plan,
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 struct Instance {
   path: PathBuf,
-
   projects: HashMap<String, Project>,
 }
 
@@ -64,8 +67,6 @@ impl Instance {
       ),
     };
 
-    println!("Loaded: {instance:#?}");
-
     Ok(instance)
   }
 
@@ -74,41 +75,118 @@ impl Instance {
     Ok(())
   }
 
-  pub fn entrypoint(
+  pub fn compare(
     &self,
-    filter: Vec<String>,
-  ) -> Result<(), Box<dyn std::error::Error>> {
-    for project in self.projects.values().filter(|p| match filter.is_empty() {
-      true => true,
-      false => filter.contains(&p.name),
-    }) {
-      project.source.prepare(project, &self.path)?;
-      // for cmd in project.phase.build.to_vec() {
-      //   exit_status(
-      //     project.nix_shell(&self.path, &cmd).status()?,
-      //     &project.name,
-      //     &cmd,
-      //   );
-      // }
-      // for cmd in project.phase.start.to_vec() {
-      //   exit_status(
-      //     project.nix_shell(&self.path, &cmd).status()?,
-      //     &project.name,
-      //     &cmd,
-      //   );
-      // }
-      if let Some(content) =
-        project.service.generate_service(project, &self.path)
-      {
-        fs::write(
-          project.main_path(&self.path).join("daemon.service"),
-          content,
-        )?;
+  ) -> Result<HashMap<String, ConfigChange>, Box<dyn std::error::Error>> {
+    let mut changes: HashMap<String, ConfigChange> = HashMap::new();
+    let old_state = fs::read_to_string(Self::state_path(&self.path))
+      .ok()
+      .and_then(|s| ron::from_str::<Instance>(&s).ok())
+      .unwrap_or_default();
+    for project in self.projects.values() {
+      if let Some(old_project) = old_state.projects.get(&project.name) {
+        if old_project != project {
+          changes.insert(project.name.clone(), ConfigChange::Changed);
+        }
+      } else {
+        changes.insert(project.name.clone(), ConfigChange::Added);
       }
     }
 
+    for project in old_state.projects.values() {
+      if !self.projects.contains_key(&project.name) {
+        changes.insert(project.name.clone(), ConfigChange::Removed);
+      }
+    }
+
+    Ok(changes)
+  }
+
+  pub fn cmd_plan(&self) -> Result<(), Box<dyn std::error::Error>> {
+    let changes = self.compare()?;
+    let mut plan: BTreeMap<Phase, Vec<String>> = BTreeMap::new();
+    for (name, change) in changes.into_iter() {
+      for (phase, name) in
+        change.into_phases().into_iter().map(|p| (p, name.clone()))
+      {
+        if let Some(entry) = plan.get_mut(&phase) {
+          entry.push(name);
+        } else {
+          plan.insert(phase, vec![name]);
+        }
+      }
+    }
+
+    println!("plan: {plan:#?}");
+
     Ok(())
   }
+
+  // pub fn entrypoint(
+  //   &self,
+  //   filter: Vec<String>,
+  // ) -> Result<(), Box<dyn std::error::Error>> {
+  //   for project in self.projects.values().filter(|p| match filter.is_empty() {
+  //     true => true,
+  //     false => filter.contains(&p.name),
+  //   }) {
+  //     project.source.prepare(project, &self.path)?;
+  //     for cmd in project.phase.build.to_vec() {
+  //       exit_status(
+  //         project.nix_shell(&self.path, &cmd).status()?,
+  //         &project.name,
+  //         &cmd,
+  //       );
+  //     }
+  //     // for cmd in project.phase.start.to_vec() {
+  //     //   exit_status(
+  //     //     project.nix_shell(&self.path, &cmd).status()?,
+  //     //     &project.name,
+  //     //     &cmd,
+  //     //   );
+  //     // }
+  //     if let Some(content) = project
+  //       .service
+  //       .as_ref()
+  //       .and_then(|s| s.generate_service(project, &self.path))
+  //     {
+  //       fs::write(
+  //         project.main_path(&self.path).join("daemon.service"),
+  //         content,
+  //       )?;
+  //     }
+  //   }
+
+  //   Ok(())
+  // }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Hash)]
+enum ConfigChange {
+  Added,
+  Changed,
+  Removed,
+}
+
+impl ConfigChange {
+  pub fn into_phases(&self) -> Vec<Phase> {
+    match self {
+      ConfigChange::Added => vec![Phase::Setup, Phase::Install, Phase::Build],
+      ConfigChange::Changed => todo!(),
+      ConfigChange::Removed => vec![Phase::Teardown],
+    }
+  }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+enum Phase {
+  Setup,
+  Install,
+  Update,
+  Build,
+  Start,
+  Stop,
+  Teardown,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -123,7 +201,7 @@ struct Project {
   #[serde(default)]
   env: HashMap<String, String>,
   #[serde(default)]
-  service: Service,
+  service: Option<ServiceConfig>,
 }
 
 impl Project {
@@ -230,6 +308,9 @@ struct Phases {
   /// Stops the project.
   #[serde(default)]
   stop: Cmds,
+  /// Runs on removal.
+  #[serde(default)]
+  teardown: Cmds,
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
@@ -259,42 +340,10 @@ impl Cmds {
   }
 }
 
-#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
-#[serde(untagged)]
-enum Service {
-  #[default]
-  None,
-  File(PathBuf),
-  Config(ServiceConfig),
-}
-
-impl Service {
-  pub fn generate_service(
-    &self,
-    project: &Project,
-    path: &Path,
-  ) -> Option<String> {
-    match self {
-      Service::None => None,
-      Service::File(path_buf) => fs::read_to_string(dbg!(path_buf)).ok(),
-      Service::Config(service_config) => {
-        service_config.generate_service(project, path)
-      }
-    }
-  }
-}
-
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 struct ServiceConfig {
   enable: bool,
-  #[serde(default)]
-  exec: Cmds,
-
-  #[serde(default)]
-  working_directory: Option<PathBuf>,
-  #[serde(default)]
-  dynamic_user: bool,
   #[serde(default)]
   restart_on: RestartOn,
 }
@@ -306,12 +355,9 @@ impl ServiceConfig {
     path: &Path,
   ) -> Option<String> {
     println!("generating service for {}", project.name);
-    if self.enable {
-      let cmds = self
-        .exec
-        .to_option()
-        .or(project.phase.start.to_option())
-        .unwrap_or_default();
+    if let Some(cmds) = project.phase.start.to_option()
+      && self.enable
+    {
       let template = format!(
         r#"[Service]
   DynamicUser=yes
@@ -336,18 +382,18 @@ impl ServiceConfig {
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 enum RestartOn {
-  Always,
   #[default]
   Never,
+  Always,
   OnFailure,
 }
 
-fn main() {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
   let cli = Cli::parse();
   let path: PathBuf = cli.path.unwrap_or(".".into());
   let instance = Instance::from_path(path).unwrap();
-  if cli.exec {
-    instance.entrypoint(cli.projects).unwrap();
+
+  match cli.command {
+    Commands::Plan => instance.cmd_plan(),
   }
-  instance.write_state().unwrap();
 }
