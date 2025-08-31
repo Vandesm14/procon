@@ -133,6 +133,16 @@ impl Instance {
         match phase {
           Phase::Setup => {
             project.source.install(project, &self.path)?;
+            if let Some(service) =
+              project.service.generate_service(project, &self.path)
+            {
+              fs::write(
+                project
+                  .main_path(&self.path)
+                  .join(format!("procon-{}.service", project.name)),
+                service,
+              )?;
+            }
             for cmd in project.phase.setup.to_vec() {
               exit_status(
                 project.nix_shell(&self.path, &cmd).status()?,
@@ -225,7 +235,7 @@ struct Project {
   #[serde(default)]
   env: HashMap<String, String>,
   #[serde(default)]
-  service: Option<ServiceConfig>,
+  service: ServiceConfig,
 }
 
 impl Project {
@@ -235,6 +245,10 @@ impl Project {
 
   pub fn source_path(&self, path: &Path) -> PathBuf {
     self.main_path(path).join("source")
+  }
+
+  pub fn deps_nix(&self) -> Vec<String> {
+    self.deps.get("nix").cloned().unwrap_or(Vec::new())
   }
 
   pub fn nix_shell(&self, path: &Path, cmd: &str) -> Command {
@@ -359,12 +373,26 @@ impl Cmds {
   }
 }
 
+fn get_true() -> bool {
+  true
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 struct ServiceConfig {
-  enable: bool,
+  #[serde(default = "get_true")]
+  autostart: bool,
   #[serde(default)]
   restart_on: RestartOn,
+}
+
+impl Default for ServiceConfig {
+  fn default() -> Self {
+    Self {
+      autostart: true,
+      restart_on: Default::default(),
+    }
+  }
 }
 
 impl ServiceConfig {
@@ -373,14 +401,12 @@ impl ServiceConfig {
     project: &Project,
     path: &Path,
   ) -> Option<String> {
-    if let Some(cmds) = project.phase.start.to_option()
-      && self.enable
-    {
+    if let Some(cmds) = project.phase.start.to_option() {
       let template = format!(
         r#"[Service]
   DynamicUser=yes
   WorkingDirectory={}
-  ExecStart=/usr/bin/env bash -c "{}"
+  ExecStart=/usr/bin/env bash -c "nix-shell -p {} --run "{}""
   "#,
         project
           .main_path(path)
@@ -388,6 +414,7 @@ impl ServiceConfig {
           .unwrap()
           .to_str()
           .unwrap(),
+        project.deps_nix().join(" "),
         cmds.join("&&"),
       );
       Some(template)
