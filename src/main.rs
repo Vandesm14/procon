@@ -32,6 +32,7 @@ struct Cli {
 enum Commands {
   Plan,
   Apply,
+  Clean,
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
@@ -41,38 +42,44 @@ struct Instance {
 }
 
 impl Instance {
-  pub fn projects_path(path: &Path) -> PathBuf {
-    path.join("projects")
+  pub fn artifacts_path(&self) -> PathBuf {
+    self.path.join("artifacts")
   }
 
-  pub fn state_path(path: &Path) -> PathBuf {
-    path.join("state.ron")
+  pub fn projects_path(&self) -> PathBuf {
+    self.path.join("projects")
+  }
+
+  pub fn state_path(&self) -> PathBuf {
+    self.path.join("state.ron")
   }
 
   pub fn from_path(path: PathBuf) -> Result<Self, Box<dyn std::error::Error>> {
     let mut projects: Vec<Project> = Vec::new();
-    for file in WalkDir::new(Self::projects_path(&path))
+    let mut instance = Self::default();
+    instance.path = path;
+
+    for file in WalkDir::new(instance.projects_path())
       .into_iter()
       .filter_map(|e| e.ok())
       .filter(|f| f.file_name().to_str().unwrap().ends_with(".toml"))
     {
-      let project: Project =
+      let mut project: Project =
         toml::from_str(&fs::read_to_string(file.path()).unwrap()).unwrap();
+      project.config_path = file.path().parent().unwrap().canonicalize()?;
       projects.push(project);
     }
 
-    let instance = Self {
-      path,
-      projects: HashMap::from_iter(
-        projects.into_iter().map(|p| (p.name.clone(), p)),
-      ),
-    };
+    instance.projects =
+      HashMap::from_iter(projects.into_iter().map(|p| (p.name.clone(), p)));
+
+    println!("load: {:?}", instance);
 
     Ok(instance)
   }
 
   pub fn write_state(&self) -> Result<(), Box<dyn std::error::Error>> {
-    fs::write(Self::state_path(&self.path), ron::to_string(self)?)?;
+    fs::write(self.state_path(), ron::to_string(self)?)?;
     Ok(())
   }
 
@@ -80,7 +87,7 @@ impl Instance {
     &self,
   ) -> Result<HashMap<String, ConfigChange>, Box<dyn std::error::Error>> {
     let mut changes: HashMap<String, ConfigChange> = HashMap::new();
-    let old_state = fs::read_to_string(Self::state_path(&self.path))
+    let old_state = fs::read_to_string(self.state_path())
       .ok()
       .and_then(|s| ron::from_str::<Instance>(&s).ok())
       .unwrap_or_default();
@@ -138,7 +145,7 @@ impl Instance {
             {
               fs::write(
                 project
-                  .main_path(&self.path)
+                  .artifact_path(&self.path)
                   .join(format!("procon-{}.service", project.name)),
                 service,
               )?;
@@ -192,6 +199,11 @@ impl Instance {
     self.apply()?;
     Ok(())
   }
+
+  pub fn cmd_clean(&self) -> Result<(), Box<dyn std::error::Error>> {
+    fs::remove_dir_all(self.artifacts_path())?;
+    Ok(())
+  }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Hash)]
@@ -236,15 +248,17 @@ struct Project {
   env: HashMap<String, String>,
   #[serde(default)]
   service: ServiceConfig,
+  #[serde(default)]
+  config_path: PathBuf,
 }
 
 impl Project {
-  pub fn main_path(&self, path: &Path) -> PathBuf {
+  pub fn artifact_path(&self, path: &Path) -> PathBuf {
     path.join("artifacts").join(&self.name)
   }
 
   pub fn source_path(&self, path: &Path) -> PathBuf {
-    self.main_path(path).join("source")
+    self.artifact_path(path).join("source")
   }
 
   pub fn deps_nix(&self) -> Vec<String> {
@@ -306,7 +320,7 @@ impl Source {
             .arg("--run")
             .arg(format!(
               "unzip -o {} -d {}",
-              path_buf.display(),
+              project.config_path.join(path_buf).display(),
               source_path.display()
             ))
             .status()?,
@@ -409,7 +423,7 @@ impl ServiceConfig {
   ExecStart=/usr/bin/env bash -c "nix-shell -p {} --run "{}""
   "#,
         project
-          .main_path(path)
+          .artifact_path(path)
           .canonicalize()
           .unwrap()
           .to_str()
@@ -441,5 +455,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
   match cli.command {
     Commands::Plan => instance.cmd_plan(),
     Commands::Apply => instance.cmd_apply(),
+    Commands::Clean => instance.cmd_clean(),
   }
 }
