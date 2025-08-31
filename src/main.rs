@@ -26,6 +26,10 @@ pub static NIX_SHELL_PATH: LazyLock<PathBuf> = LazyLock::new(|| {
   PathBuf::from_str("/nix/var/nix/profiles/default/bin/nix-shell").unwrap()
 });
 
+pub static IS_DEVELOPMENT_MODE: LazyLock<bool> = LazyLock::new(|| {
+  std::env::var_os("ENVIRONMENT").is_some_and(|v| v == "development")
+});
+
 #[derive(Parser)]
 #[command(author, version, about)]
 struct Cli {
@@ -37,9 +41,9 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-  Plan,
-  Apply,
-  Clean,
+  Plan { projects: Vec<String> },
+  Apply { projects: Vec<String> },
+  Clean { projects: Vec<String> },
   RunProxy { project_name: String },
 }
 
@@ -105,13 +109,20 @@ impl Instance {
     Ok(())
   }
 
-  pub fn compare(&self) -> HashMap<String, ConfigChange> {
+  pub fn compare(
+    &self,
+    project_filter: Option<&[String]>,
+  ) -> HashMap<String, ConfigChange> {
     let mut changes: HashMap<String, ConfigChange> = HashMap::new();
     let old_state = fs::read_to_string(self.state_path())
       .ok()
       .and_then(|s| ron::from_str::<Instance>(&s).ok())
       .unwrap_or_default();
-    for project in self.projects.values() {
+    for project in self
+      .projects
+      .values()
+      .filter(|p| project_filter.map(|f| f.contains(&p.name)).unwrap_or(true))
+    {
       if let Some(old_project) = old_state.projects.get(&project.name) {
         if old_project != project {
           changes.insert(project.name.clone(), ConfigChange::Changed);
@@ -121,7 +132,11 @@ impl Instance {
       }
     }
 
-    for project in old_state.projects.values() {
+    for project in old_state
+      .projects
+      .values()
+      .filter(|p| project_filter.map(|f| f.contains(&p.name)).unwrap_or(true))
+    {
       if !self.projects.contains_key(&project.name) {
         changes.insert(project.name.clone(), ConfigChange::Removed);
       }
@@ -130,17 +145,20 @@ impl Instance {
     changes
   }
 
-  pub fn plan(&self) -> BTreeMap<String, Vec<Phase>> {
+  pub fn plan(
+    &self,
+    project_filter: Option<&[String]>,
+  ) -> BTreeMap<String, Vec<Phase>> {
     BTreeMap::from_iter(
       self
-        .compare()
+        .compare(project_filter)
         .into_iter()
         .map(|(name, change)| (name, change.to_phases())),
     )
   }
 
-  pub fn make_actions(&self) -> Vec<Action> {
-    let plan = self.plan();
+  pub fn make_actions(&self, project_filter: Option<&[String]>) -> Vec<Action> {
+    let plan = self.plan(project_filter);
     let mut actions: Vec<Action> = Vec::new();
 
     for (name, phases) in plan.iter() {
@@ -148,7 +166,6 @@ impl Instance {
         for phase in phases.iter() {
           match phase {
             Phase::Setup => {
-              fs::create_dir_all(project.artifact_path(&self.path)).unwrap();
               actions.extend(project.source.setup(project, &self.path));
               if let Some(service) =
                 project.service.generate_service_string(project, &self.path)
@@ -245,13 +262,23 @@ impl Instance {
     actions
   }
 
-  pub fn apply(&self) -> Result<(), Box<dyn std::error::Error>> {
+  pub fn apply(
+    &self,
+    project_filter: Option<&[String]>,
+  ) -> Result<(), Box<dyn std::error::Error>> {
     // Init services path.
     fs::create_dir_all(self.services_path()).unwrap();
+    for (_, project) in self
+      .projects
+      .iter()
+      .filter(|(p, _)| project_filter.map(|f| f.contains(p)).unwrap_or(true))
+    {
+      fs::create_dir_all(project.artifact_path(&self.path)).unwrap();
+    }
 
     let mut skip: HashSet<String> = HashSet::new();
     let mut action_phases: BTreeMap<Phase, Vec<Action>> =
-      self.make_actions().into_iter().fold(
+      self.make_actions(project_filter).into_iter().fold(
         BTreeMap::new(),
         |mut acc: BTreeMap<Phase, Vec<Action>>, action| {
           acc.entry(action.phase).or_default().push(action);
@@ -333,21 +360,38 @@ impl Instance {
     Ok(())
   }
 
-  pub fn cmd_plan(&self) -> Result<(), Box<dyn std::error::Error>> {
-    let plan = self.make_actions();
+  pub fn cmd_plan(
+    &self,
+    project_filter: Option<&[String]>,
+  ) -> Result<(), Box<dyn std::error::Error>> {
+    let plan = self.make_actions(project_filter);
     println!("plan: {plan:#?}");
     Ok(())
   }
 
-  pub fn cmd_apply(&self) -> Result<(), Box<dyn std::error::Error>> {
-    self.apply()?;
+  pub fn cmd_apply(
+    &self,
+    project_filter: Option<&[String]>,
+  ) -> Result<(), Box<dyn std::error::Error>> {
+    self.apply(project_filter)?;
     Ok(())
   }
 
-  pub fn cmd_clean(&self) -> Result<(), Box<dyn std::error::Error>> {
-    if fs::exists(self.artifacts_path()).is_ok_and(|b| b) {
-      fs::remove_dir_all(self.artifacts_path())?;
+  pub fn cmd_clean(
+    &self,
+    project_filter: Option<&[String]>,
+  ) -> Result<(), Box<dyn std::error::Error>> {
+    for project_name in self
+      .projects
+      .keys()
+      .filter(|p| project_filter.map(|f| f.contains(p)).unwrap_or(true))
+    {
+      let project_artifact_path = self.artifacts_path().join(project_name);
+      if fs::exists(&project_artifact_path).is_ok_and(|b| b) {
+        fs::remove_dir_all(&project_artifact_path)?;
+      }
     }
+
     Ok(())
   }
 
@@ -786,14 +830,39 @@ enum RestartOn {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+  if *IS_DEVELOPMENT_MODE {
+    println!("DEVELOPMENT MODE");
+  }
+
   let cli = Cli::parse();
   let path: PathBuf = cli.path.unwrap_or(".".into());
   let instance = Instance::from_path(path).unwrap();
 
   match cli.command {
-    Commands::Plan => instance.cmd_plan(),
-    Commands::Apply => instance.cmd_apply(),
-    Commands::Clean => instance.cmd_clean(),
+    Commands::Plan { projects } => {
+      let filter = if projects.is_empty() {
+        None
+      } else {
+        Some(projects.as_slice())
+      };
+      instance.cmd_plan(filter)
+    }
+    Commands::Apply { projects } => {
+      let filter = if projects.is_empty() {
+        None
+      } else {
+        Some(projects.as_slice())
+      };
+      instance.cmd_apply(filter)
+    }
+    Commands::Clean { projects } => {
+      let filter = if projects.is_empty() {
+        None
+      } else {
+        Some(projects.as_slice())
+      };
+      instance.cmd_clean(filter)
+    }
     Commands::RunProxy { project_name } => instance.cmd_run_proxy(project_name),
   }
 }
