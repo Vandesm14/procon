@@ -2,7 +2,7 @@ use std::{
   collections::{BTreeMap, HashMap, HashSet},
   fs::{self},
   path::{Path, PathBuf},
-  process::{Command, Stdio},
+  process::{Command, ExitStatus, Stdio},
   str::FromStr,
   sync::LazyLock,
 };
@@ -26,9 +26,8 @@ pub static NIX_SHELL_PATH: LazyLock<PathBuf> = LazyLock::new(|| {
   PathBuf::from_str("/nix/var/nix/profiles/default/bin/nix-shell").unwrap()
 });
 
-pub static IS_DEVELOPMENT_MODE: LazyLock<bool> = LazyLock::new(|| {
-  std::env::var_os("ENVIRONMENT").is_some_and(|v| v == "development")
-});
+pub static IS_SAFE_MODE: LazyLock<bool> =
+  LazyLock::new(|| std::env::var_os("MODE").is_some_and(|v| v == "safe"));
 
 #[derive(Parser)]
 #[command(author, version, about)]
@@ -169,6 +168,7 @@ impl Instance {
               actions.extend(project.source.setup(project, &self.path));
               if let Some(service) =
                 project.service.generate_service_string(project, &self.path)
+                && !*IS_SAFE_MODE
               {
                 actions.push(Action::new(
                   &project.name,
@@ -230,7 +230,7 @@ impl Instance {
             }
             Phase::Start => {
               // TODO: This shouldn't be restart, but this is required for the step.
-              if project.service.autostart {
+              if !*IS_SAFE_MODE && project.service.autostart {
                 actions.push(Action::new(
                   &project.name,
                   Phase::Start,
@@ -242,14 +242,16 @@ impl Instance {
               }
             }
             Phase::Stop => {
-              actions.push(Action::new(
-                &project.name,
-                Phase::Stop,
-                ActionKind::SystemCtl(ActionKindSystemCtl::Stop(format!(
-                  "procon-proj-{}.service",
-                  project.name
-                ))),
-              ));
+              if !*IS_SAFE_MODE {
+                actions.push(Action::new(
+                  &project.name,
+                  Phase::Stop,
+                  ActionKind::SystemCtl(ActionKindSystemCtl::Stop(format!(
+                    "procon-proj-{}.service",
+                    project.name
+                  ))),
+                ));
+              }
             }
             Phase::Teardown => {
               // TODO: Teardown.
@@ -590,6 +592,10 @@ enum ActionKindSystemCtl {
 
 impl ActionKindSystemCtl {
   pub fn apply(&self) -> std::io::Result<std::process::ExitStatus> {
+    if *IS_SAFE_MODE {
+      return Ok(ExitStatus::default());
+    }
+
     let systemctl = SystemCtl::builder()
       .additional_args(vec!["--user".to_string()])
       .build();
@@ -830,8 +836,8 @@ enum RestartOn {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-  if *IS_DEVELOPMENT_MODE {
-    println!("DEVELOPMENT MODE");
+  if *IS_SAFE_MODE {
+    println!("SAFE MODE");
   }
 
   let cli = Cli::parse();
