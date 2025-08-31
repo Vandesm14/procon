@@ -2,22 +2,28 @@ use std::{
   collections::{BTreeMap, HashMap, HashSet},
   fs::{self},
   path::{Path, PathBuf},
-  process::{Child, Command, ExitStatus, Stdio},
+  process::{Command, Stdio},
+  str::FromStr,
+  sync::LazyLock,
 };
 
 use clap::{Parser, Subcommand, command};
 use serde::{Deserialize, Serialize};
 use walkdir::WalkDir;
 
-fn exit_status(status: ExitStatus, project_name: &str, cmd: &str) {
-  if let Some(code) = status.code()
-    && code != 0
-  {
-    panic!(
-      "Project {project_name} failed to run command: {cmd} with exit code: {code}"
-    );
-  }
-}
+pub static SELF_PATH: LazyLock<PathBuf> = LazyLock::new(|| {
+  // Absolute path to the currently running executable.
+  // On Linux this resolves /proc/self/exe to a real path.
+  let exe = std::env::current_exe().expect("cannot get current exe");
+  // If it's a symlink, canonicalize to the real file (best-effort).
+  exe.canonicalize().unwrap_or(exe)
+});
+
+// pub static NIX_SHELL_PATH: LazyLock<PathBuf> =
+//   LazyLock::new(|| which::which("nix-shell").unwrap());
+pub static NIX_SHELL_PATH: LazyLock<PathBuf> = LazyLock::new(|| {
+  PathBuf::from_str("/nix/var/nix/profiles/default/bin/nix-shell").unwrap()
+});
 
 #[derive(Parser)]
 #[command(author, version, about)]
@@ -33,6 +39,7 @@ enum Commands {
   Plan,
   Apply,
   Clean,
+  RunProxy { project_name: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
@@ -62,7 +69,7 @@ impl Instance {
   }
 
   pub fn services_path(&self) -> PathBuf {
-    dirs::home_dir().unwrap().join("systemd/user/procon")
+    dirs::config_dir().unwrap().join("systemd/user")
   }
 
   pub fn from_path(path: PathBuf) -> Result<Self, Box<dyn std::error::Error>> {
@@ -156,7 +163,7 @@ impl Instance {
                     project.service_path(&self.path),
                     self
                       .services_path()
-                      .join(format!("{}.service", project.name)),
+                      .join(format!("procon-proj-{}.service", project.name)),
                   )),
                 ));
               }
@@ -229,7 +236,7 @@ impl Instance {
       } else {
         match &action.kind {
           ActionKind::Command(action_kind_command) => {
-            let result = action_kind_command.apply();
+            let result = action_kind_command.apply(true);
             match result {
               Ok(output) => {
                 if output.status.success() {
@@ -258,10 +265,7 @@ impl Instance {
         }
       }
 
-      println!(
-        "{:?}: {:?} {:?} {:?}",
-        action.status, action.phase, action.project_name, action.kind
-      );
+      println!("{}", action);
     }
 
     self.write_state()?;
@@ -281,7 +285,37 @@ impl Instance {
   }
 
   pub fn cmd_clean(&self) -> Result<(), Box<dyn std::error::Error>> {
-    fs::remove_dir_all(self.artifacts_path())?;
+    if fs::exists(self.artifacts_path()).is_ok_and(|b| b) {
+      fs::remove_dir_all(self.artifacts_path())?;
+    }
+    Ok(())
+  }
+
+  pub fn cmd_run_proxy(
+    &self,
+    project_name: String,
+  ) -> Result<(), Box<dyn std::error::Error>> {
+    if let Some(project) = self.projects.get(&project_name) {
+      println!("Running {}", project.name);
+      let command = ActionKindCommand::NixShell(
+        project.source_path(&self.path).canonicalize().unwrap(),
+        project.deps_nix(),
+        project.phase.start.clone(),
+      );
+      match command.apply(false) {
+        Ok(ok) => {
+          if let Some(code) = ok.status.code() {
+            println!("Exited with code: {}.", code);
+          } else {
+            println!("Process terminated by signal.");
+          }
+        }
+        Err(err) => {
+          println!("Action: {:?}", command);
+          panic!("Execution error: {:?}", err);
+        }
+      }
+    }
     Ok(())
   }
 }
@@ -321,6 +355,16 @@ struct Action {
   phase: Phase,
   kind: ActionKind,
   status: ActionStatus,
+}
+
+impl std::fmt::Display for Action {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    write!(
+      f,
+      "{:?}: {:?} {:?} {:?}",
+      self.status, self.phase, self.project_name, self.kind
+    )
+  }
 }
 
 impl Action {
@@ -364,20 +408,24 @@ enum ActionKindCommand {
 }
 
 impl ActionKindCommand {
-  pub fn apply(&self) -> std::io::Result<std::process::Output> {
+  pub fn apply(&self, piped: bool) -> std::io::Result<std::process::Output> {
     match self {
       ActionKindCommand::GitClone(url, path) => {
         let mut cmd = Command::new("git");
-        cmd.stdout(Stdio::piped());
-        cmd.stderr(Stdio::piped());
+        if piped {
+          cmd.stdout(Stdio::piped());
+          cmd.stderr(Stdio::piped());
+        }
 
         cmd.arg("clone").arg(url).arg(path);
         cmd.output()
       }
       ActionKindCommand::NixShell(path, deps, cmds) => {
-        let mut cmd = Command::new("nix-shell");
-        cmd.stdout(Stdio::piped());
-        cmd.stderr(Stdio::piped());
+        let mut cmd = Command::new(NIX_SHELL_PATH.as_path());
+        if piped {
+          cmd.stdout(Stdio::piped());
+          cmd.stderr(Stdio::piped());
+        }
 
         cmd.current_dir(path);
         cmd
@@ -388,9 +436,11 @@ impl ActionKindCommand {
         cmd.output()
       }
       ActionKindCommand::Unzip(from, to) => {
-        let mut cmd = Command::new("nix-shell");
-        cmd.stdout(Stdio::piped());
-        cmd.stderr(Stdio::piped());
+        let mut cmd = Command::new(NIX_SHELL_PATH.as_path());
+        if piped {
+          cmd.stdout(Stdio::piped());
+          cmd.stderr(Stdio::piped());
+        }
 
         cmd.arg("-p").arg("unzip").arg("--run").arg(format!(
           "unzip -o {} -d {}",
@@ -466,18 +516,6 @@ impl Project {
 
   pub fn deps_nix(&self) -> Vec<String> {
     self.deps.get("nix").cloned().unwrap_or(Vec::new())
-  }
-
-  pub fn nix_shell(&self, path: &Path, cmd: &str) -> Command {
-    let mut command = Command::new("nix-shell");
-    command
-      .current_dir(self.source_path(path))
-      .arg("-p")
-      .args(self.deps.get("nix").unwrap_or(&Vec::new()))
-      .arg("--run")
-      .arg(cmd);
-
-    command
   }
 }
 
@@ -622,26 +660,16 @@ impl ServiceConfig {
     project: &Project,
     path: &Path,
   ) -> Option<String> {
-    if let Some(cmds) = project.phase.start.to_option() {
-      let template = format!(
-        r#"[Service]
-  DynamicUser=yes
+    let template = format!(
+      r#"[Service]
   WorkingDirectory={}
-  ExecStart=/nix/var/nix/profiles/default/bin/nix-shell -p {} --run "{}"
+  ExecStart={} run-proxy {}
   "#,
-        project
-          .artifact_path(path)
-          .canonicalize()
-          .unwrap()
-          .to_str()
-          .unwrap(),
-        project.deps_nix().join(" "),
-        cmds.join("&&"),
-      );
-      Some(template)
-    } else {
-      None
-    }
+      path.canonicalize().ok()?.display(),
+      SELF_PATH.display(),
+      project.name
+    );
+    Some(template)
   }
 }
 
@@ -663,5 +691,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Commands::Plan => instance.cmd_plan(),
     Commands::Apply => instance.cmd_apply(),
     Commands::Clean => instance.cmd_clean(),
+    Commands::RunProxy { project_name } => instance.cmd_run_proxy(project_name),
   }
 }
