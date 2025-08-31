@@ -274,7 +274,7 @@ impl Instance {
   }
 
   pub fn cmd_plan(&self) -> Result<(), Box<dyn std::error::Error>> {
-    let plan = self.plan();
+    let plan = self.make_actions();
     println!("plan: {plan:#?}");
     Ok(())
   }
