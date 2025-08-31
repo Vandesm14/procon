@@ -37,9 +37,9 @@
     - [ ] Generates Nginx config
     - [ ] Applies Nginx
   - [ ] `Start`
-    - [ ] Starts daemon (proxied)
+    - [x] Starts daemon (proxied)
   - [ ] `Stop`
-    - [ ] Stops daemon
+    - [x] Stops daemon
   - [ ] `Teardown`
     - [ ] Stops daemon
     - [ ] Removes daemon
