@@ -48,9 +48,7 @@ impl Project {
   }
 
   pub fn service_path(&self, path: &Path) -> PathBuf {
-    self
-      .artifact_path(path)
-      .join(format!("{}.service", self.name))
+    self.artifact_path(path).join("daemon.service")
   }
 
   pub fn deps_nix(&self) -> Vec<String> {
