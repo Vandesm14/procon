@@ -73,6 +73,8 @@ impl Instance {
   }
 
   pub fn from_path(path: PathBuf) -> Result<Self, Box<dyn std::error::Error>> {
+    let path = path.canonicalize().unwrap();
+
     let mut projects: Vec<Project> = Vec::new();
     let mut instance = Self::new(path);
 
@@ -300,7 +302,7 @@ impl Instance {
     if let Some(project) = self.projects.get(&project_name) {
       println!("Running {}", project.name);
       let command = ActionKindCommand::NixShell(
-        project.source_path(&self.path).canonicalize().unwrap(),
+        project.source_path(&self.path),
         project.deps_nix(),
         project.phase.start.clone(),
       );
@@ -558,13 +560,7 @@ enum Source {
 impl Source {
   pub fn setup(&self, project: &Project, path: &Path) -> Vec<Action> {
     let source_path = project.source_path(path);
-    let mut actions = vec![Action::new(
-      &project.name,
-      Phase::Setup,
-      ActionKind::Filesystem(ActionKindFilesystem::CreateDirAll(
-        source_path.clone(),
-      )),
-    )];
+    let mut actions = Vec::new();
     match self {
       Source::None => return vec![],
       Source::Path(path_buf) => actions.push(Action::new(
@@ -691,7 +687,7 @@ impl ServiceConfig {
   WorkingDirectory={}
   ExecStart={} run-proxy {}
   "#,
-      path.canonicalize().ok()?.display(),
+      path.display(),
       SELF_PATH.display(),
       project.name
     );
