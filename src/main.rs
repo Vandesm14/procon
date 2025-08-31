@@ -81,16 +81,18 @@ impl Instance {
       .filter_map(|e| e.ok())
       .filter(|f| f.file_name().to_str().unwrap().ends_with(".toml"))
     {
-      let mut project: Project =
+      let project_toml: ProjectToml =
         toml::from_str(&fs::read_to_string(file.path()).unwrap()).unwrap();
-      project.config_path = file.path().parent().unwrap().canonicalize()?;
+
+      let project = Project::from_project_toml(
+        project_toml,
+        file.path().parent().unwrap().canonicalize()?,
+      );
       projects.push(project);
     }
 
     instance.projects =
       HashMap::from_iter(projects.into_iter().map(|p| (p.name.clone(), p)));
-
-    println!("load: {:?}", instance);
 
     Ok(instance)
   }
@@ -485,21 +487,30 @@ enum ActionStatus {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 struct Project {
   name: String,
-  #[serde(default)]
   source: Source,
-  #[serde(default)]
   deps: HashMap<String, Vec<String>>,
-  #[serde(default)]
   phase: Phases,
-  #[serde(default)]
   env: HashMap<String, String>,
-  #[serde(default)]
   service: ServiceConfig,
-  #[serde(default)]
-  config_path: PathBuf,
+  toml_path: PathBuf,
 }
 
 impl Project {
+  pub fn from_project_toml(
+    project_toml: ProjectToml,
+    toml_path: PathBuf,
+  ) -> Self {
+    Self {
+      name: project_toml.name,
+      source: project_toml.source,
+      deps: project_toml.deps,
+      phase: project_toml.phase,
+      env: project_toml.env,
+      service: project_toml.service,
+      toml_path,
+    }
+  }
+
   pub fn artifact_path(&self, path: &Path) -> PathBuf {
     path.join("artifacts").join(&self.name)
   }
@@ -517,6 +528,21 @@ impl Project {
   pub fn deps_nix(&self) -> Vec<String> {
     self.deps.get("nix").cloned().unwrap_or(Vec::new())
   }
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+struct ProjectToml {
+  name: String,
+  #[serde(default)]
+  source: Source,
+  #[serde(default)]
+  deps: HashMap<String, Vec<String>>,
+  #[serde(default)]
+  phase: Phases,
+  #[serde(default)]
+  env: HashMap<String, String>,
+  #[serde(default)]
+  service: ServiceConfig,
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
@@ -564,7 +590,7 @@ impl Source {
           &project.name,
           Phase::Setup,
           ActionKind::Command(ActionKindCommand::Unzip(
-            project.config_path.join(path_buf),
+            project.toml_path.join(path_buf),
             source_path,
           )),
         ));
