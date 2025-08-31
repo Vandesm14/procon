@@ -93,9 +93,7 @@ impl Instance {
     Ok(())
   }
 
-  pub fn compare(
-    &self,
-  ) -> Result<HashMap<String, ConfigChange>, Box<dyn std::error::Error>> {
+  pub fn compare(&self) -> HashMap<String, ConfigChange> {
     let mut changes: HashMap<String, ConfigChange> = HashMap::new();
     let old_state = fs::read_to_string(self.state_path())
       .ok()
@@ -117,87 +115,141 @@ impl Instance {
       }
     }
 
-    Ok(changes)
+    changes
   }
 
-  pub fn plan(
-    &self,
-  ) -> Result<BTreeMap<Phase, Vec<String>>, Box<dyn std::error::Error>> {
-    let changes = self.compare()?;
-    let mut plan: BTreeMap<Phase, Vec<String>> = BTreeMap::new();
-    for (name, change) in changes.into_iter() {
-      for (phase, name) in
-        change.to_phases().into_iter().map(|p| (p, name.clone()))
-      {
-        if let Some(entry) = plan.get_mut(&phase) {
-          entry.push(name);
-        } else {
-          plan.insert(phase, vec![name]);
+  pub fn plan(&self) -> BTreeMap<String, Vec<Phase>> {
+    BTreeMap::from_iter(
+      self
+        .compare()
+        .into_iter()
+        .map(|(name, change)| (name, change.to_phases())),
+    )
+  }
+
+  pub fn make_actions(&self) -> Vec<Action> {
+    let plan = self.plan();
+    let mut actions: Vec<Action> = Vec::new();
+
+    for (name, phases) in plan.iter() {
+      if let Some(project) = self.projects.get(name) {
+        for phase in phases.iter() {
+          println!("{phase:?} {}", project.name);
+          match phase {
+            Phase::Setup => {
+              fs::create_dir_all(project.artifact_path(&self.path)).unwrap();
+              actions.extend(project.source.setup(project, &self.path));
+              if let Some(service) =
+                project.service.generate_service_string(project, &self.path)
+              {
+                actions.push(Action::new(
+                  &project.name,
+                  Phase::Setup,
+                  ActionKind::Filesystem(ActionKindFilesystem::Write(
+                    project.service_path(&self.path),
+                    service,
+                  )),
+                ));
+                actions.push(Action::new(
+                  &project.name,
+                  Phase::Setup,
+                  ActionKind::Filesystem(ActionKindFilesystem::Copy(
+                    project.service_path(&self.path),
+                    self
+                      .services_path()
+                      .join(format!("{}.service", project.name)),
+                  )),
+                ));
+              }
+              for cmd in project.phase.setup.to_vec() {
+                actions.push(Action::new(
+                  &project.name,
+                  Phase::Setup,
+                  ActionKind::Command(ActionKindCommand::NixShell(
+                    project.deps_nix(),
+                    Cmds::Single(cmd),
+                  )),
+                ));
+              }
+            }
+            Phase::Update => {
+              // TODO: Update source.
+              for cmd in project.phase.setup.to_vec() {
+                actions.push(Action::new(
+                  &project.name,
+                  Phase::Update,
+                  ActionKind::Command(ActionKindCommand::NixShell(
+                    project.deps_nix(),
+                    Cmds::Single(cmd),
+                  )),
+                ));
+              }
+            }
+            Phase::Build => {
+              for cmd in project.phase.build.to_vec() {
+                actions.push(Action::new(
+                  &project.name,
+                  Phase::Build,
+                  ActionKind::Command(ActionKindCommand::NixShell(
+                    project.deps_nix(),
+                    Cmds::Single(cmd),
+                  )),
+                ));
+              }
+            }
+            Phase::Start => {
+              // TODO: Start.
+            }
+            Phase::Stop => {
+              // TODO: Stop.
+            }
+            Phase::Teardown => {
+              // TODO: Teardown.
+            }
+          }
         }
       }
     }
 
-    Ok(plan)
+    actions
   }
 
   pub fn apply(&self) -> Result<(), Box<dyn std::error::Error>> {
     // Init necessary paths.
     fs::create_dir_all(self.services_path())?;
 
-    let plan = self.plan()?;
     let mut skip: HashSet<String> = HashSet::new();
-
-    for (phase, names) in plan.iter() {
-      for project in names.iter().filter_map(|n| self.projects.get(n)) {
-        println!("{phase:?} {}", project.name);
-        match phase {
-          Phase::Setup => {
-            project.source.install(project, &self.path)?;
-            if let Some(service) =
-              project.service.generate_service(project, &self.path)
-            {
-              fs::write(project.service_path(&self.path), service)?;
-              if project.service.autostart {
-                fs::copy(
-                  project.service_path(&self.path),
-                  self
-                    .services_path()
-                    .join(format!("{}.service", project.name)),
-                )?;
-              }
-            }
-            for cmd in project.phase.setup.to_vec() {
-              exit_status(
-                project.nix_shell(&self.path, &cmd).status()?,
-                &project.name,
-                &cmd,
-              );
+    let mut actions = self.make_actions();
+    for action in actions.iter_mut() {
+      if skip.contains(&action.project_name) {
+        action.mark_cancelled();
+      } else {
+        match &action.kind {
+          ActionKind::Command(action_kind_command) => {
+            let error = action_kind_command.apply();
+            if let Some(error) = error {
+              action.mark_failed(format!("{error:?}"));
+              skip.insert(action.project_name.clone());
+            } else {
+              action.mark_done();
             }
           }
-          Phase::Update => {
-            for cmd in project.phase.setup.to_vec() {
-              exit_status(
-                project.nix_shell(&self.path, &cmd).status()?,
-                &project.name,
-                &cmd,
-              );
-            }
-            todo!("update source");
-          }
-          Phase::Build => {
-            for cmd in project.phase.build.to_vec() {
-              exit_status(
-                project.nix_shell(&self.path, &cmd).status()?,
-                &project.name,
-                &cmd,
-              );
+          ActionKind::Filesystem(action_kind_filesystem) => {
+            let error = action_kind_filesystem.apply();
+            if let Some(error) = error {
+              action.mark_failed(format!("{error:?}"));
+              skip.insert(action.project_name.clone());
+            } else {
+              action.mark_done();
             }
           }
-          Phase::Start => {}
-          Phase::Stop => todo!("stop"),
-          Phase::Teardown => todo!("teardown"),
         }
       }
+    }
+
+    println!("actions:");
+    for action in actions.into_iter() {
+      println!("{action:?}");
     }
 
     self.write_state()?;
@@ -230,7 +282,7 @@ enum ConfigChange {
 }
 
 impl ConfigChange {
-  pub fn to_phases(&self) -> Vec<Phase> {
+  pub fn to_phases(self) -> Vec<Phase> {
     match self {
       ConfigChange::Added => vec![Phase::Setup, Phase::Build, Phase::Start],
       ConfigChange::Changed => {
@@ -249,6 +301,113 @@ enum Phase {
   Build,
   Start,
   Stop,
+}
+
+#[derive(Debug)]
+struct Action {
+  project_name: String,
+  phase: Phase,
+  kind: ActionKind,
+  status: ActionStatus,
+}
+
+impl Action {
+  fn new(project_name: &str, phase: Phase, kind: ActionKind) -> Self {
+    Self {
+      project_name: project_name.to_string(),
+      phase,
+      kind,
+      status: ActionStatus::Todo,
+    }
+  }
+
+  pub fn mark_todo(&mut self) {
+    self.status = ActionStatus::Todo;
+  }
+
+  pub fn mark_done(&mut self) {
+    self.status = ActionStatus::Done;
+  }
+
+  pub fn mark_failed(&mut self, reason: String) {
+    self.status = ActionStatus::Fail(reason);
+  }
+
+  pub fn mark_cancelled(&mut self) {
+    self.status = ActionStatus::Cancelled;
+  }
+}
+
+#[derive(Debug)]
+enum ActionKind {
+  Command(ActionKindCommand),
+  Filesystem(ActionKindFilesystem),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+enum ActionKindCommand {
+  GitClone(String, PathBuf),
+  NixShell(Vec<String>, Cmds),
+  Unzip(PathBuf),
+}
+
+impl ActionKindCommand {
+  pub fn apply(&self) -> Option<std::io::Error> {
+    match self {
+      ActionKindCommand::GitClone(url, path) => {
+        let mut cmd = Command::new("git");
+        cmd.arg("clone").arg(url).arg(path);
+        cmd.status().err()
+      }
+      ActionKindCommand::NixShell(deps, cmds) => {
+        let mut cmd = Command::new("nix-shell");
+        cmd
+          .arg("-p")
+          .arg(deps.join(" "))
+          .arg("--run")
+          .arg(cmds.to_vec().join("&&"));
+        cmd.status().err()
+      }
+      ActionKindCommand::Unzip(path) => {
+        let mut cmd = Command::new("unzip");
+        cmd
+          .arg("-o")
+          .arg(path)
+          .arg("-d")
+          .arg(path.parent().unwrap());
+        cmd.status().err()
+      }
+    }
+  }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+enum ActionKindFilesystem {
+  CreateDirAll(PathBuf),
+  Copy(PathBuf, PathBuf),
+  Write(PathBuf, String),
+}
+
+impl ActionKindFilesystem {
+  pub fn apply(&self) -> Option<std::io::Error> {
+    match self {
+      ActionKindFilesystem::CreateDirAll(path) => {
+        fs::create_dir_all(path).err()
+      }
+      ActionKindFilesystem::Copy(from, to) => fs::copy(from, to).err(),
+      ActionKindFilesystem::Write(path, content) => {
+        fs::write(path, content).err()
+      }
+    }
+  }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+enum ActionStatus {
+  Todo,
+  Done,
+  Fail(String),
+  Cancelled,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -311,52 +470,60 @@ enum Source {
 }
 
 impl Source {
-  pub fn install(
-    &self,
-    project: &Project,
-    path: &Path,
-  ) -> Result<(), Box<dyn std::error::Error>> {
+  pub fn setup(&self, project: &Project, path: &Path) -> Vec<Action> {
     let source_path = project.source_path(path);
-    fs::create_dir_all(&source_path)?;
+    let mut actions = vec![Action::new(
+      &project.name,
+      Phase::Setup,
+      ActionKind::Filesystem(ActionKindFilesystem::CreateDirAll(
+        source_path.clone(),
+      )),
+    )];
     match self {
-      Source::None => return Ok(()),
-      Source::Path(path_buf) => {
-        fs::copy(path_buf, source_path)?;
-      }
+      Source::None => return vec![],
+      Source::Path(path_buf) => actions.push(Action::new(
+        &project.name,
+        Phase::Setup,
+        ActionKind::Filesystem(ActionKindFilesystem::Copy(
+          path_buf.to_path_buf(),
+          source_path,
+        )),
+      )),
       Source::Git(url) => {
-        exit_status(
-          Command::new("git")
-            .arg("clone")
-            .arg(url)
-            .arg(source_path)
-            .status()?,
+        actions.push(Action::new(
           &project.name,
-          &format!("git clone {}", url),
-        );
+          Phase::Setup,
+          ActionKind::Command(ActionKindCommand::GitClone(
+            url.to_string(),
+            source_path,
+          )),
+        ));
       }
       Source::Zip(path_buf) => {
-        exit_status(
-          Command::new("nix-shell")
-            .arg("-p")
-            .arg("unzip")
-            .arg("--run")
-            .arg(format!(
+        actions.push(Action::new(
+          &project.name,
+          Phase::Setup,
+          ActionKind::Command({
+            let mut cmd = Command::new("nix-shell");
+            cmd.arg("-p").arg("unzip").arg("--run").arg(format!(
               "unzip -o {} -d {}",
               project.config_path.join(path_buf).display(),
               source_path.display()
-            ))
-            .status()?,
-          &project.name,
-          &format!(
-            "unzip -o {} -d {}",
-            path_buf.display(),
-            source_path.display()
-          ),
-        );
+            ));
+            ActionKindCommand::NixShell(
+              project.deps_nix(),
+              Cmds::new_single(format!(
+                "unzip -o {} -d {}",
+                project.config_path.join(path_buf).display(),
+                source_path.display()
+              )),
+            )
+          }),
+        ));
       }
     }
 
-    Ok(())
+    actions
   }
 }
 
@@ -392,6 +559,14 @@ enum Cmds {
 }
 
 impl Cmds {
+  pub fn new(cmds: Vec<String>) -> Self {
+    Self::Many(cmds)
+  }
+
+  pub fn new_single(cmd: String) -> Self {
+    Self::Single(cmd)
+  }
+
   pub fn to_vec(&self) -> Vec<String> {
     match self {
       Cmds::None => Vec::new(),
@@ -432,7 +607,7 @@ impl Default for ServiceConfig {
 }
 
 impl ServiceConfig {
-  pub fn generate_service(
+  pub fn generate_service_string(
     &self,
     project: &Project,
     path: &Path,
@@ -442,7 +617,7 @@ impl ServiceConfig {
         r#"[Service]
   DynamicUser=yes
   WorkingDirectory={}
-  ExecStart=/usr/bin/env bash -c "nix-shell -p {} --run "{}""
+  ExecStart=/nix/var/nix/profiles/default/bin/nix-shell -p {} --run "{}"
   "#,
         project
           .artifact_path(path)
