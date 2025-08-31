@@ -110,7 +110,7 @@ impl Instance {
     let mut plan: BTreeMap<Phase, Vec<String>> = BTreeMap::new();
     for (name, change) in changes.into_iter() {
       for (phase, name) in
-        change.into_phases().into_iter().map(|p| (p, name.clone()))
+        change.to_phases().into_iter().map(|p| (p, name.clone()))
       {
         if let Some(entry) = plan.get_mut(&phase) {
           entry.push(name);
@@ -123,13 +123,7 @@ impl Instance {
     Ok(plan)
   }
 
-  pub fn cmd_plan(&self) -> Result<(), Box<dyn std::error::Error>> {
-    let plan = self.plan();
-    println!("plan: {plan:#?}");
-    Ok(())
-  }
-
-  pub fn cmd_apply(&self) -> Result<(), Box<dyn std::error::Error>> {
+  pub fn apply(&self) -> Result<(), Box<dyn std::error::Error>> {
     let plan = self.plan()?;
     let mut skip: HashSet<String> = HashSet::new();
 
@@ -138,7 +132,7 @@ impl Instance {
         println!("{phase:?} {}", project.name);
         match phase {
           Phase::Setup => {
-            fs::create_dir_all(project.source_path(&self.path))?;
+            project.source.install(project, &self.path)?;
             for cmd in project.phase.setup.to_vec() {
               exit_status(
                 project.nix_shell(&self.path, &cmd).status()?,
@@ -147,17 +141,16 @@ impl Instance {
               );
             }
           }
-          Phase::Install => {
-            project.source.install(project, &self.path)?;
-            for cmd in project.phase.install.to_vec() {
+          Phase::Update => {
+            for cmd in project.phase.setup.to_vec() {
               exit_status(
                 project.nix_shell(&self.path, &cmd).status()?,
                 &project.name,
                 &cmd,
               );
             }
+            todo!("update source");
           }
-          Phase::Update => todo!(),
           Phase::Build => {
             for cmd in project.phase.build.to_vec() {
               exit_status(
@@ -167,13 +160,26 @@ impl Instance {
               );
             }
           }
-          Phase::Start => todo!(),
-          Phase::Stop => todo!(),
-          Phase::Teardown => todo!(),
+          Phase::Start => todo!("start"),
+          Phase::Stop => todo!("stop"),
+          Phase::Teardown => todo!("teardown"),
         }
       }
     }
 
+    self.write_state()?;
+
+    Ok(())
+  }
+
+  pub fn cmd_plan(&self) -> Result<(), Box<dyn std::error::Error>> {
+    let plan = self.plan();
+    println!("plan: {plan:#?}");
+    Ok(())
+  }
+
+  pub fn cmd_apply(&self) -> Result<(), Box<dyn std::error::Error>> {
+    self.apply()?;
     Ok(())
   }
 }
@@ -186,24 +192,25 @@ enum ConfigChange {
 }
 
 impl ConfigChange {
-  pub fn into_phases(&self) -> Vec<Phase> {
+  pub fn to_phases(&self) -> Vec<Phase> {
     match self {
-      ConfigChange::Added => vec![Phase::Setup, Phase::Install, Phase::Build],
-      ConfigChange::Changed => todo!(),
-      ConfigChange::Removed => vec![Phase::Teardown],
+      ConfigChange::Added => vec![Phase::Setup, Phase::Build, Phase::Start],
+      ConfigChange::Changed => {
+        vec![Phase::Teardown, Phase::Setup, Phase::Build, Phase::Start]
+      }
+      ConfigChange::Removed => vec![Phase::Stop, Phase::Teardown],
     }
   }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 enum Phase {
+  Teardown,
   Setup,
-  Install,
   Update,
   Build,
   Start,
   Stop,
-  Teardown,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -260,6 +267,7 @@ impl Source {
     path: &Path,
   ) -> Result<(), Box<dyn std::error::Error>> {
     let source_path = project.source_path(path);
+    fs::create_dir_all(&source_path)?;
     match self {
       Source::None => return Ok(()),
       Source::Path(path_buf) => {
@@ -304,12 +312,9 @@ impl Source {
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 struct Phases {
-  /// Runs once, before source and deps are installed.
-  #[serde(default)]
-  setup: Cmds,
   /// Runs once, after the source and deps are installed.
   #[serde(default)]
-  install: Cmds,
+  setup: Cmds,
   /// Runs on an update trigger.
   #[serde(default)]
   update: Cmds,

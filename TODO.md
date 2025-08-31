@@ -20,24 +20,22 @@
   - [ ] `run-proxy` (handles failures from daemons)
 - [ ] Config
   - [ ] Added
-    - [ ] `Setup`, `Install`, `Build`
+    - [ ] `Setup`, `Build`, `Start`
   - [ ] Changed
-    - [ ] `Teardown`
-    - [ ] `Setup`, `Install`, `Build`
+    - [ ] `Teardown`, `Setup`, `Build`, `Start`
   - [ ] Removed
-    - [ ] `Teardown`
+    - [ ] `Stop`, `Teardown`
 - [ ] Phase
-  - [ ] `Setup` (hook)
-  - [ ] `Install`
+  - [ ] `Setup`
     - [ ] Installs source
-  - [ ] `Update`
-    - [ ] Updates source
-  - [ ] `Build`
-    - [ ] Builds source
     - [ ] Generates daemon (service)
     - [ ] Applies daemon
     - [ ] Generates Nginx config
     - [ ] Applies Nginx
+  - [ ] `Update`
+    - [ ] Updates source
+  - [ ] `Build`
+    - [ ] Builds source
   - [ ] `Start`
     - [ ] Starts daemon (proxied)
   - [ ] `Stop`
