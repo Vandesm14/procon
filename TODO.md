@@ -14,26 +14,26 @@
 ## Lifecycle
 
 - [ ] Commands
-  - [ ] `plan` (captures config changes and reports dry run)
-  - [ ] `apply` (applies config changes)
+  - [x] `plan` (captures config changes and reports dry run)
+  - [x] `apply` (applies config changes)
   - [ ] `update` (updates source)
-  - [ ] `run-proxy` (handles failures from daemons)
+  - [x] `run-proxy` (handles failures from daemons)
 - [ ] Config
-  - [ ] Added
-    - [ ] `Setup`, `Build`, `Start`
-  - [ ] Changed
-    - [ ] `Teardown`, `Setup`, `Build`, `Start`
-  - [ ] Removed
-    - [ ] `Stop`, `Teardown`
+  - [x] Added
+    - [x] `Setup`, `Build`, `Start`
+  - [x] Changed
+    - [x] `Teardown`, `Setup`, `Build`, `Start`
+  - [x] Removed
+    - [x] `Stop`, `Teardown`
 - [ ] Phase
-  - [ ] `Setup`
-    - [ ] Installs source
-    - [ ] Generates daemon (service)
-    - [ ] Applies daemon
+  - [x] `Setup`
+    - [x] Installs source
+    - [x] Generates daemon (service)
+    - [x] Applies daemon
   - [ ] `Update`
     - [ ] Updates source
   - [ ] `Build`
-    - [ ] Builds source
+    - [x] Builds source
     - [ ] Generates Nginx config
     - [ ] Applies Nginx
   - [ ] `Start`
