@@ -2,7 +2,7 @@ use std::{
   collections::{BTreeMap, HashMap, HashSet},
   fs::{self},
   path::{Path, PathBuf},
-  process::{Command, ExitStatus},
+  process::{Child, Command, ExitStatus, Stdio},
 };
 
 use clap::{Parser, Subcommand, command};
@@ -134,7 +134,6 @@ impl Instance {
     for (name, phases) in plan.iter() {
       if let Some(project) = self.projects.get(name) {
         for phase in phases.iter() {
-          println!("{phase:?} {}", project.name);
           match phase {
             Phase::Setup => {
               fs::create_dir_all(project.artifact_path(&self.path)).unwrap();
@@ -166,6 +165,7 @@ impl Instance {
                   &project.name,
                   Phase::Setup,
                   ActionKind::Command(ActionKindCommand::NixShell(
+                    project.source_path(&self.path),
                     project.deps_nix(),
                     Cmds::Single(cmd),
                   )),
@@ -179,6 +179,7 @@ impl Instance {
                   &project.name,
                   Phase::Update,
                   ActionKind::Command(ActionKindCommand::NixShell(
+                    project.source_path(&self.path),
                     project.deps_nix(),
                     Cmds::Single(cmd),
                   )),
@@ -191,6 +192,7 @@ impl Instance {
                   &project.name,
                   Phase::Build,
                   ActionKind::Command(ActionKindCommand::NixShell(
+                    project.source_path(&self.path),
                     project.deps_nix(),
                     Cmds::Single(cmd),
                   )),
@@ -216,8 +218,9 @@ impl Instance {
 
   pub fn apply(&self) -> Result<(), Box<dyn std::error::Error>> {
     // Init necessary paths.
-    fs::create_dir_all(self.services_path())?;
+    fs::create_dir_all(self.services_path()).unwrap();
 
+    println!("Actions:");
     let mut skip: HashSet<String> = HashSet::new();
     let mut actions = self.make_actions();
     for action in actions.iter_mut() {
@@ -226,12 +229,21 @@ impl Instance {
       } else {
         match &action.kind {
           ActionKind::Command(action_kind_command) => {
-            let error = action_kind_command.apply();
-            if let Some(error) = error {
-              action.mark_failed(format!("{error:?}"));
-              skip.insert(action.project_name.clone());
-            } else {
-              action.mark_done();
+            let result = action_kind_command.apply();
+            match result {
+              Ok(output) => {
+                if output.status.success() {
+                  action.mark_done()
+                } else {
+                  let err = String::from_utf8(output.stderr);
+                  action.mark_failed(format!("{err:?}"));
+                  skip.insert(action.project_name.clone());
+                }
+              }
+              Err(err) => {
+                action.mark_failed(format!("{err:?}"));
+                skip.insert(action.project_name.clone());
+              }
             }
           }
           ActionKind::Filesystem(action_kind_filesystem) => {
@@ -245,11 +257,11 @@ impl Instance {
           }
         }
       }
-    }
 
-    println!("actions:");
-    for action in actions.into_iter() {
-      println!("{action:?}");
+      println!(
+        "{:?}: {:?} {:?} {:?}",
+        action.status, action.phase, action.project_name, action.kind
+      );
     }
 
     self.write_state()?;
@@ -347,35 +359,45 @@ enum ActionKind {
 #[derive(Debug, Clone, PartialEq)]
 enum ActionKindCommand {
   GitClone(String, PathBuf),
-  NixShell(Vec<String>, Cmds),
-  Unzip(PathBuf),
+  NixShell(PathBuf, Vec<String>, Cmds),
+  Unzip(PathBuf, PathBuf),
 }
 
 impl ActionKindCommand {
-  pub fn apply(&self) -> Option<std::io::Error> {
+  pub fn apply(&self) -> std::io::Result<std::process::Output> {
     match self {
       ActionKindCommand::GitClone(url, path) => {
         let mut cmd = Command::new("git");
+        cmd.stdout(Stdio::piped());
+        cmd.stderr(Stdio::piped());
+
         cmd.arg("clone").arg(url).arg(path);
-        cmd.status().err()
+        cmd.output()
       }
-      ActionKindCommand::NixShell(deps, cmds) => {
+      ActionKindCommand::NixShell(path, deps, cmds) => {
         let mut cmd = Command::new("nix-shell");
+        cmd.stdout(Stdio::piped());
+        cmd.stderr(Stdio::piped());
+
+        cmd.current_dir(path);
         cmd
           .arg("-p")
-          .arg(deps.join(" "))
+          .args(deps)
           .arg("--run")
           .arg(cmds.to_vec().join("&&"));
-        cmd.status().err()
+        cmd.output()
       }
-      ActionKindCommand::Unzip(path) => {
-        let mut cmd = Command::new("unzip");
-        cmd
-          .arg("-o")
-          .arg(path)
-          .arg("-d")
-          .arg(path.parent().unwrap());
-        cmd.status().err()
+      ActionKindCommand::Unzip(from, to) => {
+        let mut cmd = Command::new("nix-shell");
+        cmd.stdout(Stdio::piped());
+        cmd.stderr(Stdio::piped());
+
+        cmd.arg("-p").arg("unzip").arg("--run").arg(format!(
+          "unzip -o {} -d {}",
+          from.display(),
+          to.display()
+        ));
+        cmd.output()
       }
     }
   }
@@ -503,22 +525,10 @@ impl Source {
         actions.push(Action::new(
           &project.name,
           Phase::Setup,
-          ActionKind::Command({
-            let mut cmd = Command::new("nix-shell");
-            cmd.arg("-p").arg("unzip").arg("--run").arg(format!(
-              "unzip -o {} -d {}",
-              project.config_path.join(path_buf).display(),
-              source_path.display()
-            ));
-            ActionKindCommand::NixShell(
-              project.deps_nix(),
-              Cmds::new_single(format!(
-                "unzip -o {} -d {}",
-                project.config_path.join(path_buf).display(),
-                source_path.display()
-              )),
-            )
-          }),
+          ActionKind::Command(ActionKindCommand::Unzip(
+            project.config_path.join(path_buf),
+            source_path,
+          )),
         ));
       }
     }
