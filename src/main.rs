@@ -9,6 +9,7 @@ use std::{
 
 use clap::{Parser, Subcommand, command};
 use serde::{Deserialize, Serialize};
+use systemctl::SystemCtl;
 use walkdir::WalkDir;
 
 pub static SELF_PATH: LazyLock<PathBuf> = LazyLock::new(|| {
@@ -211,10 +212,27 @@ impl Instance {
               }
             }
             Phase::Start => {
-              // TODO: Start.
+              // TODO: This shouldn't be restart, but this is required for the step.
+              if project.service.autostart {
+                actions.push(Action::new(
+                  &project.name,
+                  Phase::Start,
+                  ActionKind::SystemCtl(ActionKindSystemCtl::Restart(format!(
+                    "procon-proj-{}.service",
+                    project.name
+                  ))),
+                ));
+              }
             }
             Phase::Stop => {
-              // TODO: Stop.
+              actions.push(Action::new(
+                &project.name,
+                Phase::Stop,
+                ActionKind::SystemCtl(ActionKindSystemCtl::Stop(format!(
+                  "procon-proj-{}.service",
+                  project.name
+                ))),
+              ));
             }
             Phase::Teardown => {
               // TODO: Teardown.
@@ -228,48 +246,86 @@ impl Instance {
   }
 
   pub fn apply(&self) -> Result<(), Box<dyn std::error::Error>> {
-    // Init necessary paths.
+    // Init services path.
     fs::create_dir_all(self.services_path()).unwrap();
 
-    println!("Actions:");
     let mut skip: HashSet<String> = HashSet::new();
-    let mut actions = self.make_actions();
-    for action in actions.iter_mut() {
-      if skip.contains(&action.project_name) {
-        action.mark_cancelled();
-      } else {
-        match &action.kind {
-          ActionKind::Command(action_kind_command) => {
-            let result = action_kind_command.apply(true);
-            match result {
-              Ok(output) => {
-                if output.status.success() {
-                  action.mark_done()
-                } else {
-                  let err = String::from_utf8(output.stderr);
+    let mut action_phases: BTreeMap<Phase, Vec<Action>> =
+      self.make_actions().into_iter().fold(
+        BTreeMap::new(),
+        |mut acc: BTreeMap<Phase, Vec<Action>>, action| {
+          acc.entry(action.phase).or_default().push(action);
+          acc
+        },
+      );
+
+    for (phase, actions) in action_phases.iter_mut() {
+      println!("Phase: {:?}.", phase);
+
+      if *phase == Phase::Start {
+        println!("Sub-Phase: Daemon Reload.");
+        let systemctl = SystemCtl::builder()
+          .additional_args(vec!["--user".to_string()])
+          .build();
+        systemctl
+          .daemon_reload()
+          .map_err(|e| format!("Failed to reload systemd daemon: {e:?}."))?;
+      }
+
+      for action in actions.iter_mut() {
+        if skip.contains(&action.project_name) {
+          action.mark_cancelled();
+        } else {
+          match &action.kind {
+            ActionKind::Command(action_kind_command) => {
+              let result = action_kind_command.apply(true);
+              match result {
+                Ok(output) => {
+                  if output.status.success() {
+                    action.mark_done()
+                  } else {
+                    let err = String::from_utf8(output.stderr);
+                    action.mark_failed(format!("{err:?}"));
+                    skip.insert(action.project_name.clone());
+                  }
+                }
+                Err(err) => {
                   action.mark_failed(format!("{err:?}"));
                   skip.insert(action.project_name.clone());
                 }
               }
-              Err(err) => {
-                action.mark_failed(format!("{err:?}"));
+            }
+            ActionKind::Filesystem(action_kind_filesystem) => {
+              let error = action_kind_filesystem.apply();
+              if let Some(error) = error {
+                action.mark_failed(format!("{error:?}"));
                 skip.insert(action.project_name.clone());
+              } else {
+                action.mark_done();
+              }
+            }
+            ActionKind::SystemCtl(action_kind_system_ctl) => {
+              let result = action_kind_system_ctl.apply();
+              match result {
+                Ok(output) => {
+                  if output.success() {
+                    action.mark_done();
+                  } else {
+                    action.mark_failed("Systemctl failed.".to_owned());
+                    skip.insert(action.project_name.clone());
+                  }
+                }
+                Err(err) => {
+                  action.mark_failed(format!("{err:?}"));
+                  skip.insert(action.project_name.clone());
+                }
               }
             }
           }
-          ActionKind::Filesystem(action_kind_filesystem) => {
-            let error = action_kind_filesystem.apply();
-            if let Some(error) = error {
-              action.mark_failed(format!("{error:?}"));
-              skip.insert(action.project_name.clone());
-            } else {
-              action.mark_done();
-            }
-          }
         }
-      }
 
-      println!("{}", action);
+        println!("{}", action);
+      }
     }
 
     self.write_state()?;
@@ -402,6 +458,7 @@ impl Action {
 enum ActionKind {
   Command(ActionKindCommand),
   Filesystem(ActionKindFilesystem),
+  SystemCtl(ActionKindSystemCtl),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -474,6 +531,30 @@ impl ActionKindFilesystem {
       ActionKindFilesystem::Write(path, content) => {
         fs::write(path, content).err()
       }
+    }
+  }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+enum ActionKindSystemCtl {
+  Restart(String),
+  Start(String),
+  Stop(String),
+  Enable(String),
+  Disable(String),
+}
+
+impl ActionKindSystemCtl {
+  pub fn apply(&self) -> std::io::Result<std::process::ExitStatus> {
+    let systemctl = SystemCtl::builder()
+      .additional_args(vec!["--user".to_string()])
+      .build();
+    match self {
+      ActionKindSystemCtl::Restart(unit) => systemctl.restart(unit),
+      ActionKindSystemCtl::Start(unit) => systemctl.start(unit),
+      ActionKindSystemCtl::Stop(unit) => systemctl.stop(unit),
+      ActionKindSystemCtl::Enable(unit) => systemctl.enable(unit),
+      ActionKindSystemCtl::Disable(unit) => systemctl.disable(unit),
     }
   }
 }
