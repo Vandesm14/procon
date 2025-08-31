@@ -30,12 +30,12 @@
     - [ ] Installs source
     - [ ] Generates daemon (service)
     - [ ] Applies daemon
-    - [ ] Generates Nginx config
-    - [ ] Applies Nginx
   - [ ] `Update`
     - [ ] Updates source
   - [ ] `Build`
     - [ ] Builds source
+    - [ ] Generates Nginx config
+    - [ ] Applies Nginx
   - [ ] `Start`
     - [ ] Starts daemon (proxied)
   - [ ] `Stop`
