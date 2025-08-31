@@ -42,6 +42,13 @@ struct Instance {
 }
 
 impl Instance {
+  pub fn new(path: PathBuf) -> Self {
+    Self {
+      path,
+      projects: HashMap::new(),
+    }
+  }
+
   pub fn artifacts_path(&self) -> PathBuf {
     self.path.join("artifacts")
   }
@@ -54,10 +61,13 @@ impl Instance {
     self.path.join("state.ron")
   }
 
+  pub fn services_path(&self) -> PathBuf {
+    dirs::home_dir().unwrap().join("systemd/user/procon")
+  }
+
   pub fn from_path(path: PathBuf) -> Result<Self, Box<dyn std::error::Error>> {
     let mut projects: Vec<Project> = Vec::new();
-    let mut instance = Self::default();
-    instance.path = path;
+    let mut instance = Self::new(path);
 
     for file in WalkDir::new(instance.projects_path())
       .into_iter()
@@ -131,6 +141,9 @@ impl Instance {
   }
 
   pub fn apply(&self) -> Result<(), Box<dyn std::error::Error>> {
+    // Init necessary paths.
+    fs::create_dir_all(self.services_path())?;
+
     let plan = self.plan()?;
     let mut skip: HashSet<String> = HashSet::new();
 
@@ -143,12 +156,15 @@ impl Instance {
             if let Some(service) =
               project.service.generate_service(project, &self.path)
             {
-              fs::write(
-                project
-                  .artifact_path(&self.path)
-                  .join(format!("procon-{}.service", project.name)),
-                service,
-              )?;
+              fs::write(project.service_path(&self.path), service)?;
+              if project.service.autostart {
+                fs::copy(
+                  project.service_path(&self.path),
+                  self
+                    .services_path()
+                    .join(format!("{}.service", project.name)),
+                )?;
+              }
             }
             for cmd in project.phase.setup.to_vec() {
               exit_status(
@@ -177,7 +193,7 @@ impl Instance {
               );
             }
           }
-          Phase::Start => todo!("start"),
+          Phase::Start => {}
           Phase::Stop => todo!("stop"),
           Phase::Teardown => todo!("teardown"),
         }
@@ -259,6 +275,12 @@ impl Project {
 
   pub fn source_path(&self, path: &Path) -> PathBuf {
     self.artifact_path(path).join("source")
+  }
+
+  pub fn service_path(&self, path: &Path) -> PathBuf {
+    self
+      .artifact_path(path)
+      .join(format!("{}.service", self.name))
   }
 
   pub fn deps_nix(&self) -> Vec<String> {
