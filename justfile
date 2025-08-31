@@ -13,3 +13,7 @@ build:
 shell: build
   clear
   docker run --name {{IMAGE_NAME}} -it {{IMAGE_NAME}} nix-shell -p toybox yazi
+
+serve:
+  zip out.zip -r src test Cargo.lock Cargo.toml
+  miniserve --index out.zip
