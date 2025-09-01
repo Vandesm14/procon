@@ -221,6 +221,45 @@ impl Instance {
     )
   }
 
+  fn make_nginx_link_actions(
+    &self,
+    project_filter: Option<&[String]>,
+  ) -> Vec<Action> {
+    let nginx_conf_path = self.path.join("nginx.conf");
+    let mut nginx_includes = String::new();
+
+    // Collect all site.conf files from project artifacts that have nginx configurations
+    for (_, project) in self
+      .projects
+      .iter()
+      .filter(|(p, _)| project_filter.map(|f| f.contains(p)).unwrap_or(true))
+      .filter(|(_, project)| project.nginx.is_some())
+    {
+      let site_conf_path = project.nginx_path(&self.path);
+      nginx_includes
+        .push_str(&format!("include {};\n", site_conf_path.display()));
+    }
+
+    // Return action to update nginx.conf with include statements for all site.conf files
+    if !nginx_includes.is_empty() {
+      let nginx_conf_content = format!(
+        "# Global nginx configuration for procon projects\n# Add your nginx configuration here\n\n# Auto-generated includes for project site configurations\n{}",
+        nginx_includes
+      );
+
+      vec![Action::new(
+        "@PROCON",
+        Phase::Start,
+        ActionKind::Filesystem(ActionKindFilesystem::Write(
+          nginx_conf_path,
+          nginx_conf_content,
+        )),
+      )]
+    } else {
+      vec![]
+    }
+  }
+
   pub fn make_actions(&self, project_filter: Option<&[String]>) -> Vec<Action> {
     let phase_list = self.project_phase_list(project_filter);
     let mut actions: Vec<Action> = Vec::new();
@@ -325,6 +364,9 @@ impl Instance {
         }
       }
     }
+
+    // Add actions to link site.conf files from build artifacts to nginx.conf
+    actions.extend(self.make_nginx_link_actions(project_filter));
 
     actions.push(Action::new(
       "@PROCON",
