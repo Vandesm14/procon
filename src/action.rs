@@ -4,30 +4,23 @@ use std::{
   process::{Command, ExitStatus, Stdio},
 };
 
+use serde::{Deserialize, Serialize};
 use systemctl::SystemCtl;
 
 use crate::{IS_SAFE_MODE, NIX_SHELL_PATH, project::Cmds};
 
-#[derive(Debug, Clone, Copy, PartialEq, Hash)]
-pub enum ConfigChange {
-  Added,
-  Changed,
-  Removed,
-}
-
-impl ConfigChange {
-  pub fn to_phases(self) -> Vec<Phase> {
-    match self {
-      ConfigChange::Added => vec![Phase::Setup, Phase::Build, Phase::Start],
-      ConfigChange::Changed => {
-        vec![Phase::Teardown, Phase::Setup, Phase::Build, Phase::Start]
-      }
-      ConfigChange::Removed => vec![Phase::Stop, Phase::Teardown],
-    }
-  }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+  Debug,
+  Clone,
+  Copy,
+  PartialEq,
+  Eq,
+  PartialOrd,
+  Ord,
+  Hash,
+  Serialize,
+  Deserialize,
+)]
 pub enum Phase {
   Teardown,
   Setup,
@@ -197,4 +190,10 @@ pub enum ActionStatus {
   Done,
   Fail(String),
   Cancelled,
+}
+
+impl ActionStatus {
+  pub fn success(&self) -> bool {
+    matches!(self, ActionStatus::Done)
+  }
 }

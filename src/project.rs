@@ -21,9 +21,21 @@ pub struct Project {
   pub env: HashMap<String, String>,
   pub service: ServiceConfig,
   pub toml_path: PathBuf,
+  pub status: ProjectStatus,
 }
 
 impl Project {
+  pub fn non_status_equal(&self, other: &Self) -> bool {
+    self.name == other.name
+      && self.source == other.source
+      && self.deps == other.deps
+      && self.phase == other.phase
+      && self.env == other.env
+      && self.service == other.service
+    // TODO: This means the same configs from different systems need to rebuild.
+    // && self.toml_path == other.toml_path
+  }
+
   pub fn from_project_toml(
     project_toml: ProjectToml,
     toml_path: PathBuf,
@@ -35,6 +47,7 @@ impl Project {
       phase: project_toml.phase,
       env: project_toml.env,
       service: project_toml.service,
+      status: ProjectStatus::default(),
       toml_path,
     }
   }
@@ -58,17 +71,17 @@ impl Project {
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct ProjectToml {
-  name: String,
+  pub name: String,
   #[serde(default)]
-  source: Source,
+  pub source: Source,
   #[serde(default)]
-  deps: HashMap<String, Vec<String>>,
+  pub deps: HashMap<String, Vec<String>>,
   #[serde(default)]
-  phase: Phases,
+  pub phase: Phases,
   #[serde(default)]
-  env: HashMap<String, String>,
+  pub env: HashMap<String, String>,
   #[serde(default)]
-  service: ServiceConfig,
+  pub service: ServiceConfig,
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
@@ -226,4 +239,36 @@ pub enum RestartOn {
   Never,
   Always,
   OnFailure,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
+pub enum ProjectStatus {
+  #[default]
+  Added,
+  Changed,
+  Removed,
+
+  Success,
+  Failed(Phase),
+}
+
+impl ProjectStatus {
+  pub fn to_phases(self) -> Vec<Phase> {
+    match self {
+      ProjectStatus::Success => vec![],
+      ProjectStatus::Failed(phase) => match phase {
+        Phase::Teardown => vec![Phase::Teardown],
+        Phase::Setup => vec![Phase::Setup, Phase::Build, Phase::Start],
+        Phase::Update => vec![Phase::Update, Phase::Build, Phase::Start],
+        Phase::Build => vec![Phase::Build, Phase::Start],
+        Phase::Start => vec![Phase::Start],
+        Phase::Stop => vec![Phase::Stop],
+      },
+      ProjectStatus::Added => vec![Phase::Setup, Phase::Build, Phase::Start],
+      ProjectStatus::Changed => {
+        vec![Phase::Teardown, Phase::Setup, Phase::Build, Phase::Start]
+      }
+      ProjectStatus::Removed => vec![Phase::Stop, Phase::Teardown],
+    }
+  }
 }

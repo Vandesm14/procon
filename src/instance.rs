@@ -12,9 +12,9 @@ use crate::{
   IS_SAFE_MODE,
   action::{
     Action, ActionKind, ActionKindCommand, ActionKindFilesystem,
-    ActionKindSystemCtl, ConfigChange, Phase,
+    ActionKindSystemCtl, ActionStatus, Phase,
   },
-  project::{Cmds, Project, ProjectToml},
+  project::{Cmds, Project, ProjectStatus, ProjectToml},
 };
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
@@ -47,13 +47,16 @@ impl Instance {
     dirs::config_dir().unwrap().join("systemd/user")
   }
 
-  pub fn from_path(path: PathBuf) -> Result<Self, Box<dyn std::error::Error>> {
-    let path = path.canonicalize().unwrap();
+  pub fn try_init(path: PathBuf) -> Result<Self, Box<dyn std::error::Error>> {
+    let mut instance = Instance::new(path.canonicalize()?);
+    instance.read_toml()?;
+    Ok(instance)
+  }
 
-    let mut projects: Vec<Project> = Vec::new();
-    let mut instance = Self::new(path);
+  pub fn read_toml(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+    let mut live_projects: Vec<Project> = Vec::new();
 
-    for file in WalkDir::new(instance.projects_path())
+    for file in WalkDir::new(self.projects_path())
       .into_iter()
       .filter_map(|e| e.ok())
       .filter(|f| f.file_name().to_str().unwrap().ends_with(".toml"))
@@ -61,77 +64,80 @@ impl Instance {
       let project_toml: ProjectToml =
         toml::from_str(&fs::read_to_string(file.path()).unwrap()).unwrap();
 
-      let project = Project::from_project_toml(
+      let live_project = Project::from_project_toml(
         project_toml,
         file.path().parent().unwrap().canonicalize()?,
       );
-      projects.push(project);
+      live_projects.push(live_project);
     }
 
-    instance.projects =
-      HashMap::from_iter(projects.into_iter().map(|p| (p.name.clone(), p)));
+    for live_project in live_projects.iter() {
+      if let Some(project) = self.projects.get_mut(&live_project.name) {
+        if !project.non_status_equal(live_project) {
+          let mut live_project = live_project.clone();
+          live_project.status = ProjectStatus::Changed;
+          self
+            .projects
+            .insert(live_project.name.clone(), live_project);
+        }
+      } else {
+        self
+          .projects
+          .insert(live_project.name.clone(), live_project.clone());
+      }
+    }
+
+    for (name, project) in self.projects.iter_mut() {
+      if !live_projects.iter().any(|lp| lp.name == *name) {
+        project.status = ProjectStatus::Removed;
+      }
+    }
+
+    Ok(())
+  }
+
+  pub fn from_path(path: PathBuf) -> Result<Self, Box<dyn std::error::Error>> {
+    let instance = Instance::new(path.clone());
+    let mut instance = fs::read_to_string(instance.state_path())
+      .ok()
+      .and_then(|s| ron::from_str::<Instance>(&s).ok())
+      .unwrap_or_else(|| {
+        panic!(
+          "Instance file (state.ron) not found in {}. Run `procon init` to initialize.",
+          path.canonicalize().unwrap().display()
+        )
+      });
+    instance.read_toml()?;
 
     Ok(instance)
   }
 
   pub fn write_state(&self) -> Result<(), Box<dyn std::error::Error>> {
-    fs::write(self.state_path(), ron::to_string(self)?)?;
+    fs::write(
+      self.state_path(),
+      ron::ser::to_string_pretty(self, ron::ser::PrettyConfig::default())?,
+    )?;
     Ok(())
   }
 
-  pub fn compare(
+  pub fn project_phase_list(
     &self,
     project_filter: Option<&[String]>,
-  ) -> HashMap<String, ConfigChange> {
-    let mut changes: HashMap<String, ConfigChange> = HashMap::new();
-    let old_state = fs::read_to_string(self.state_path())
-      .ok()
-      .and_then(|s| ron::from_str::<Instance>(&s).ok())
-      .unwrap_or_default();
-    for project in self
-      .projects
-      .values()
-      .filter(|p| project_filter.map(|f| f.contains(&p.name)).unwrap_or(true))
-    {
-      if let Some(old_project) = old_state.projects.get(&project.name) {
-        if old_project != project {
-          changes.insert(project.name.clone(), ConfigChange::Changed);
-        }
-      } else {
-        changes.insert(project.name.clone(), ConfigChange::Added);
-      }
-    }
-
-    for project in old_state
-      .projects
-      .values()
-      .filter(|p| project_filter.map(|f| f.contains(&p.name)).unwrap_or(true))
-    {
-      if !self.projects.contains_key(&project.name) {
-        changes.insert(project.name.clone(), ConfigChange::Removed);
-      }
-    }
-
-    changes
-  }
-
-  pub fn plan(
-    &self,
-    project_filter: Option<&[String]>,
-  ) -> BTreeMap<String, Vec<Phase>> {
-    BTreeMap::from_iter(
+  ) -> HashMap<String, Vec<Phase>> {
+    HashMap::from_iter(
       self
-        .compare(project_filter)
-        .into_iter()
-        .map(|(name, change)| (name, change.to_phases())),
+        .projects
+        .iter()
+        .filter(|(p, _)| project_filter.map(|f| f.contains(p)).unwrap_or(true))
+        .map(|(name, project)| (name.clone(), project.status.to_phases())),
     )
   }
 
   pub fn make_actions(&self, project_filter: Option<&[String]>) -> Vec<Action> {
-    let plan = self.plan(project_filter);
+    let phase_list = self.project_phase_list(project_filter);
     let mut actions: Vec<Action> = Vec::new();
 
-    for (name, phases) in plan.iter() {
+    for (name, phases) in phase_list.iter() {
       if let Some(project) = self.projects.get(name) {
         for phase in phases.iter() {
           match phase {
@@ -143,7 +149,7 @@ impl Instance {
               {
                 actions.push(Action::new(
                   &project.name,
-                  Phase::Setup,
+                  *phase,
                   ActionKind::Filesystem(ActionKindFilesystem::Write(
                     project.service_path(&self.path),
                     service,
@@ -151,7 +157,7 @@ impl Instance {
                 ));
                 actions.push(Action::new(
                   &project.name,
-                  Phase::Setup,
+                  *phase,
                   ActionKind::Filesystem(ActionKindFilesystem::Copy(
                     project.service_path(&self.path),
                     self
@@ -163,7 +169,7 @@ impl Instance {
               for cmd in project.phase.setup.to_vec() {
                 actions.push(Action::new(
                   &project.name,
-                  Phase::Setup,
+                  *phase,
                   ActionKind::Command(ActionKindCommand::NixShell(
                     project.source_path(&self.path),
                     project.deps_nix(),
@@ -177,7 +183,7 @@ impl Instance {
               for cmd in project.phase.setup.to_vec() {
                 actions.push(Action::new(
                   &project.name,
-                  Phase::Update,
+                  *phase,
                   ActionKind::Command(ActionKindCommand::NixShell(
                     project.source_path(&self.path),
                     project.deps_nix(),
@@ -190,7 +196,7 @@ impl Instance {
               for cmd in project.phase.build.to_vec() {
                 actions.push(Action::new(
                   &project.name,
-                  Phase::Build,
+                  *phase,
                   ActionKind::Command(ActionKindCommand::NixShell(
                     project.source_path(&self.path),
                     project.deps_nix(),
@@ -204,7 +210,7 @@ impl Instance {
               if !*IS_SAFE_MODE && project.service.autostart {
                 actions.push(Action::new(
                   &project.name,
-                  Phase::Start,
+                  *phase,
                   ActionKind::SystemCtl(ActionKindSystemCtl::Restart(format!(
                     "procon-proj-{}.service",
                     project.name
@@ -216,7 +222,7 @@ impl Instance {
               if !*IS_SAFE_MODE {
                 actions.push(Action::new(
                   &project.name,
-                  Phase::Stop,
+                  *phase,
                   ActionKind::SystemCtl(ActionKindSystemCtl::Stop(format!(
                     "procon-proj-{}.service",
                     project.name
@@ -236,7 +242,7 @@ impl Instance {
   }
 
   pub fn apply(
-    &self,
+    &mut self,
     project_filter: Option<&[String]>,
   ) -> Result<(), Box<dyn std::error::Error>> {
     // Init services path.
@@ -249,7 +255,7 @@ impl Instance {
       fs::create_dir_all(project.artifact_path(&self.path)).unwrap();
     }
 
-    let mut skip: HashSet<String> = HashSet::new();
+    let mut skip: HashMap<String, Phase> = HashMap::new();
     let mut action_phases: BTreeMap<Phase, Vec<Action>> =
       self.make_actions(project_filter).into_iter().fold(
         BTreeMap::new(),
@@ -273,7 +279,7 @@ impl Instance {
       }
 
       for action in actions.iter_mut() {
-        if skip.contains(&action.project_name) {
+        if skip.contains_key(&action.project_name) {
           action.mark_cancelled();
         } else {
           match &action.kind {
@@ -286,12 +292,12 @@ impl Instance {
                   } else {
                     let err = String::from_utf8(output.stderr);
                     action.mark_failed(format!("{err:?}"));
-                    skip.insert(action.project_name.clone());
+                    skip.insert(action.project_name.clone(), *phase);
                   }
                 }
                 Err(err) => {
                   action.mark_failed(format!("{err:?}"));
-                  skip.insert(action.project_name.clone());
+                  skip.insert(action.project_name.clone(), *phase);
                 }
               }
             }
@@ -299,7 +305,7 @@ impl Instance {
               let error = action_kind_filesystem.apply();
               if let Some(error) = error {
                 action.mark_failed(format!("{error:?}"));
-                skip.insert(action.project_name.clone());
+                skip.insert(action.project_name.clone(), *phase);
               } else {
                 action.mark_done();
               }
@@ -312,12 +318,12 @@ impl Instance {
                     action.mark_done();
                   } else {
                     action.mark_failed("Systemctl failed.".to_owned());
-                    skip.insert(action.project_name.clone());
+                    skip.insert(action.project_name.clone(), *phase);
                   }
                 }
                 Err(err) => {
                   action.mark_failed(format!("{err:?}"));
-                  skip.insert(action.project_name.clone());
+                  skip.insert(action.project_name.clone(), *phase);
                 }
               }
             }
@@ -325,6 +331,14 @@ impl Instance {
         }
 
         println!("{}", action);
+      }
+    }
+
+    for project in self.projects.values_mut() {
+      if let Some(phase) = skip.get(&project.name) {
+        project.status = ProjectStatus::Failed(*phase);
+      } else {
+        project.status = ProjectStatus::Success;
       }
     }
 
@@ -337,13 +351,21 @@ impl Instance {
     &self,
     project_filter: Option<&[String]>,
   ) -> Result<(), Box<dyn std::error::Error>> {
-    let plan = self.make_actions(project_filter);
-    println!("plan: {plan:#?}");
+    let actions = self.make_actions(project_filter);
+    self.write_state()?;
+    println!("Status:");
+    for (name, project) in self.projects.iter() {
+      println!(" - {}: {:?}", name, project.status);
+    }
+    println!("Plan:");
+    for action in actions.iter() {
+      println!(" - {:?}", action);
+    }
     Ok(())
   }
 
   pub fn cmd_apply(
-    &self,
+    &mut self,
     project_filter: Option<&[String]>,
   ) -> Result<(), Box<dyn std::error::Error>> {
     self.apply(project_filter)?;
