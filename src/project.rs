@@ -1,5 +1,6 @@
 use std::{
   collections::HashMap,
+  fs,
   path::{Path, PathBuf},
 };
 
@@ -20,6 +21,7 @@ pub struct Project {
   pub phase: Phases,
   pub env: HashMap<String, String>,
   pub service: ServiceConfig,
+  pub nginx: Option<NginxKind>,
   pub status: ProjectStatus,
 }
 
@@ -31,6 +33,7 @@ impl Project {
       && self.phase == other.phase
       && self.env == other.env
       && self.service == other.service
+      && self.nginx == other.nginx
   }
 
   pub fn from_project_toml(project_toml: ProjectToml) -> Self {
@@ -41,6 +44,7 @@ impl Project {
       phase: project_toml.phase,
       env: project_toml.env,
       service: project_toml.service,
+      nginx: project_toml.nginx,
       status: ProjectStatus::default(),
     }
   }
@@ -55,6 +59,10 @@ impl Project {
 
   pub fn service_path(&self, path: &Path) -> PathBuf {
     self.artifact_path(path).join("daemon.service")
+  }
+
+  pub fn nginx_path(&self, path: &Path) -> PathBuf {
+    self.artifact_path(path).join("site.conf")
   }
 
   pub fn deps_nix(&self) -> Vec<String> {
@@ -75,6 +83,8 @@ pub struct ProjectToml {
   pub env: HashMap<String, String>,
   #[serde(default)]
   pub service: ServiceConfig,
+  #[serde(default)]
+  pub nginx: Option<NginxKind>,
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
@@ -85,6 +95,66 @@ pub enum Source {
   Path(PathBuf),
   Git(String),
   Zip(PathBuf),
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum NginxKind {
+  File(PathBuf),
+}
+
+impl NginxKind {
+  pub fn setup(&self, project: &Project, instance_path: &Path) -> Vec<Action> {
+    match self {
+      NginxKind::File(nginx_file_path) => {
+        let resolved_content = Self::resolve_includes(instance_path.join(nginx_file_path), instance_path);
+        match resolved_content {
+          Ok(content) => vec![Action::new(
+            &project.name,
+            Phase::Setup,
+            ActionKind::Filesystem(ActionKindFilesystem::Write(
+              project.nginx_path(instance_path),
+              content,
+            )),
+          )],
+          Err(_) => vec![],
+        }
+      }
+    }
+  }
+
+  fn resolve_includes(nginx_file: PathBuf, base_path: &Path) -> Result<String, Box<dyn std::error::Error>> {
+    let content = fs::read_to_string(&nginx_file)?;
+    let mut resolved_content = String::new();
+    
+    for line in content.lines() {
+      let trimmed = line.trim();
+      if trimmed.starts_with("include ") && trimmed.ends_with(';') {
+        let include_path = trimmed
+          .strip_prefix("include ")
+          .unwrap()
+          .strip_suffix(';')
+          .unwrap()
+          .trim();
+        
+        let full_include_path = if include_path.starts_with('/') {
+          PathBuf::from(include_path)
+        } else {
+          nginx_file.parent().unwrap_or(base_path).join(include_path)
+        };
+        
+        if let Ok(included_content) = Self::resolve_includes(full_include_path, base_path) {
+          resolved_content.push_str(&included_content);
+          resolved_content.push('\n');
+        }
+      } else {
+        resolved_content.push_str(line);
+        resolved_content.push('\n');
+      }
+    }
+    
+    Ok(resolved_content)
+  }
 }
 
 impl Source {

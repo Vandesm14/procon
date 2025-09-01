@@ -146,6 +146,9 @@ impl Instance {
           match phase {
             Phase::Setup => {
               actions.extend(project.source.setup(project, &self.path));
+              if let Some(nginx) = &project.nginx {
+                actions.extend(nginx.setup(project, &self.path));
+              }
               if let Some(service) =
                 project.service.generate_service_string(project, &self.path)
               {
