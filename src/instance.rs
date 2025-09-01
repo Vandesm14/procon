@@ -1,5 +1,5 @@
 use std::{
-  collections::{BTreeMap, HashMap, HashSet},
+  collections::{BTreeMap, HashMap},
   fs,
   path::PathBuf,
 };
@@ -9,18 +9,18 @@ use systemctl::SystemCtl;
 use walkdir::WalkDir;
 
 use crate::{
-  IS_SAFE_MODE,
   action::{
     Action, ActionKind, ActionKindCommand, ActionKindFilesystem,
-    ActionKindSystemCtl, ActionStatus, Phase,
+    ActionKindSystemCtl, Phase,
   },
   project::{Cmds, Project, ProjectStatus, ProjectToml},
 };
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct Instance {
-  path: PathBuf,
   projects: HashMap<String, Project>,
+  #[serde(skip)]
+  path: PathBuf,
 }
 
 impl Instance {
@@ -53,6 +53,23 @@ impl Instance {
     Ok(instance)
   }
 
+  pub fn from_path(path: PathBuf) -> Result<Self, Box<dyn std::error::Error>> {
+    let instance = Instance::new(path.clone());
+    let mut instance = fs::read_to_string(instance.state_path())
+      .ok()
+      .and_then(|s| ron::from_str::<Instance>(&s).ok())
+      .unwrap_or_else(|| {
+        panic!(
+          "Instance file (state.ron) not found in {}. Run `procon init` to initialize.",
+          path.canonicalize().unwrap().display()
+        )
+      });
+    instance.path = path.canonicalize()?;
+    instance.read_toml()?;
+
+    Ok(instance)
+  }
+
   pub fn read_toml(&mut self) -> Result<(), Box<dyn std::error::Error>> {
     let mut live_projects: Vec<Project> = Vec::new();
 
@@ -64,16 +81,18 @@ impl Instance {
       let project_toml: ProjectToml =
         toml::from_str(&fs::read_to_string(file.path()).unwrap()).unwrap();
 
-      let live_project = Project::from_project_toml(
-        project_toml,
-        file.path().parent().unwrap().canonicalize()?,
-      );
+      let live_project = Project::from_project_toml(project_toml);
       live_projects.push(live_project);
     }
 
     for live_project in live_projects.iter() {
       if let Some(project) = self.projects.get_mut(&live_project.name) {
-        if !project.non_status_equal(live_project) {
+        if !project.non_status_equal(live_project)
+          && matches!(
+            project.status,
+            ProjectStatus::Success | ProjectStatus::Failed(..)
+          )
+        {
           let mut live_project = live_project.clone();
           live_project.status = ProjectStatus::Changed;
           self
@@ -89,27 +108,11 @@ impl Instance {
 
     for (name, project) in self.projects.iter_mut() {
       if !live_projects.iter().any(|lp| lp.name == *name) {
-        project.status = ProjectStatus::Removed;
+        project.status = ProjectStatus::Remove;
       }
     }
 
     Ok(())
-  }
-
-  pub fn from_path(path: PathBuf) -> Result<Self, Box<dyn std::error::Error>> {
-    let instance = Instance::new(path.clone());
-    let mut instance = fs::read_to_string(instance.state_path())
-      .ok()
-      .and_then(|s| ron::from_str::<Instance>(&s).ok())
-      .unwrap_or_else(|| {
-        panic!(
-          "Instance file (state.ron) not found in {}. Run `procon init` to initialize.",
-          path.canonicalize().unwrap().display()
-        )
-      });
-    instance.read_toml()?;
-
-    Ok(instance)
   }
 
   pub fn write_state(&self) -> Result<(), Box<dyn std::error::Error>> {
@@ -145,7 +148,6 @@ impl Instance {
               actions.extend(project.source.setup(project, &self.path));
               if let Some(service) =
                 project.service.generate_service_string(project, &self.path)
-                && !*IS_SAFE_MODE
               {
                 actions.push(Action::new(
                   &project.name,
@@ -207,7 +209,7 @@ impl Instance {
             }
             Phase::Start => {
               // TODO: This shouldn't be restart, but this is required for the step.
-              if !*IS_SAFE_MODE && project.service.autostart {
+              if project.service.autostart {
                 actions.push(Action::new(
                   &project.name,
                   *phase,
@@ -219,16 +221,14 @@ impl Instance {
               }
             }
             Phase::Stop => {
-              if !*IS_SAFE_MODE {
-                actions.push(Action::new(
-                  &project.name,
-                  *phase,
-                  ActionKind::SystemCtl(ActionKindSystemCtl::Stop(format!(
-                    "procon-proj-{}.service",
-                    project.name
-                  ))),
-                ));
-              }
+              actions.push(Action::new(
+                &project.name,
+                *phase,
+                ActionKind::SystemCtl(ActionKindSystemCtl::Stop(format!(
+                  "procon-proj-{}.service",
+                  project.name
+                ))),
+              ));
             }
             Phase::Teardown => {
               // TODO: Teardown.
@@ -269,7 +269,7 @@ impl Instance {
       println!("Phase: {:?}.", phase);
 
       if *phase == Phase::Start {
-        println!("Sub-Phase: Daemon Reload.");
+        println!(" - Sub-Phase: Daemon Reload.");
         let systemctl = SystemCtl::builder()
           .additional_args(vec!["--user".to_string()])
           .build();
@@ -330,7 +330,7 @@ impl Instance {
           }
         }
 
-        println!("{}", action);
+        println!(" - {}", action);
       }
     }
 

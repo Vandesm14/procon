@@ -20,7 +20,6 @@ pub struct Project {
   pub phase: Phases,
   pub env: HashMap<String, String>,
   pub service: ServiceConfig,
-  pub toml_path: PathBuf,
   pub status: ProjectStatus,
 }
 
@@ -32,14 +31,9 @@ impl Project {
       && self.phase == other.phase
       && self.env == other.env
       && self.service == other.service
-    // TODO: This means the same configs from different systems need to rebuild.
-    // && self.toml_path == other.toml_path
   }
 
-  pub fn from_project_toml(
-    project_toml: ProjectToml,
-    toml_path: PathBuf,
-  ) -> Self {
+  pub fn from_project_toml(project_toml: ProjectToml) -> Self {
     Self {
       name: project_toml.name,
       source: project_toml.source,
@@ -48,7 +42,6 @@ impl Project {
       env: project_toml.env,
       service: project_toml.service,
       status: ProjectStatus::default(),
-      toml_path,
     }
   }
 
@@ -123,7 +116,7 @@ impl Source {
           &project.name,
           Phase::Setup,
           ActionKind::Command(ActionKindCommand::Unzip(
-            project.toml_path.join(path_buf),
+            path.join(path_buf),
             source_path,
           )),
         ));
@@ -244,9 +237,9 @@ pub enum RestartOn {
 #[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
 pub enum ProjectStatus {
   #[default]
-  Added,
+  Add,
+  Remove,
   Changed,
-  Removed,
 
   Success,
   Failed(Phase),
@@ -264,11 +257,11 @@ impl ProjectStatus {
         Phase::Start => vec![Phase::Start],
         Phase::Stop => vec![Phase::Stop],
       },
-      ProjectStatus::Added => vec![Phase::Setup, Phase::Build, Phase::Start],
+      ProjectStatus::Add => vec![Phase::Setup, Phase::Build, Phase::Start],
       ProjectStatus::Changed => {
         vec![Phase::Teardown, Phase::Setup, Phase::Build, Phase::Start]
       }
-      ProjectStatus::Removed => vec![Phase::Stop, Phase::Teardown],
+      ProjectStatus::Remove => vec![Phase::Stop, Phase::Teardown],
     }
   }
 }
