@@ -80,6 +80,7 @@ pub enum ActionKind {
   Command(ActionKindCommand),
   Filesystem(ActionKindFilesystem),
   SystemCtl(ActionKindSystemCtl),
+  Nginx(ActionKindNginx),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -195,5 +196,33 @@ pub enum ActionStatus {
 impl ActionStatus {
   pub fn success(&self) -> bool {
     matches!(self, ActionStatus::Done)
+  }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ActionKindNginx {
+  Test,
+  SysCtlReload,
+}
+
+impl ActionKindNginx {
+  pub fn apply(&self) -> std::io::Result<std::process::ExitStatus> {
+    if *IS_SAFE_MODE {
+      return Ok(ExitStatus::default());
+    }
+
+    match self {
+      ActionKindNginx::Test => {
+        let mut cmd = Command::new("sudo");
+        cmd.arg("nginx");
+        cmd.arg("-t");
+        cmd.output().map(|o| o.status)
+      }
+      ActionKindNginx::SysCtlReload => {
+        let mut cmd = Command::new("sudo");
+        cmd.arg("systemctl").arg("reload").arg("nginx");
+        cmd.output().map(|o| o.status)
+      }
+    }
   }
 }

@@ -11,7 +11,7 @@ use walkdir::WalkDir;
 use crate::{
   action::{
     Action, ActionKind, ActionKindCommand, ActionKindFilesystem,
-    ActionKindSystemCtl, Phase,
+    ActionKindNginx, ActionKindSystemCtl, Phase,
   },
   project::{Cmds, Project, ProjectStatus, ProjectToml},
 };
@@ -241,6 +241,17 @@ impl Instance {
       }
     }
 
+    actions.push(Action::new(
+      "@PROCON",
+      Phase::Start,
+      ActionKind::Nginx(ActionKindNginx::Test),
+    ));
+    actions.push(Action::new(
+      "@PROCON",
+      Phase::Start,
+      ActionKind::Nginx(ActionKindNginx::SysCtlReload),
+    ));
+
     actions
   }
 
@@ -272,7 +283,7 @@ impl Instance {
       println!("Phase: {:?}.", phase);
 
       if *phase == Phase::Start {
-        println!(" - Sub-Phase: Daemon Reload.");
+        println!("Sub-Phase: Daemon Reload.");
         let systemctl = SystemCtl::builder()
           .additional_args(vec!["--user".to_string()])
           .build();
@@ -321,6 +332,36 @@ impl Instance {
                     action.mark_done();
                   } else {
                     action.mark_failed("Systemctl failed.".to_owned());
+                    skip.insert(action.project_name.clone(), *phase);
+                  }
+                }
+                Err(err) => {
+                  action.mark_failed(format!("{err:?}"));
+                  skip.insert(action.project_name.clone(), *phase);
+                }
+              }
+            }
+            ActionKind::Nginx(action_kind_nginx) => {
+              println!("Sub-Phase: Nginx Reload.");
+              match action_kind_nginx {
+                ActionKindNginx::Test => {
+                  println!(
+                    " - Root access is required to run `sudo nginx -t`."
+                  );
+                }
+                ActionKindNginx::SysCtlReload => {
+                  println!(
+                    " - Root access is required to run `sudo systemctl reload nginx`."
+                  );
+                }
+              }
+              let result = action_kind_nginx.apply();
+              match result {
+                Ok(status) => {
+                  if status.success() {
+                    action.mark_done();
+                  } else {
+                    action.mark_failed("Nginx failed.".to_owned());
                     skip.insert(action.project_name.clone(), *phase);
                   }
                 }
