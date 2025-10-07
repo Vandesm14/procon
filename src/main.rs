@@ -13,13 +13,21 @@ struct Cli {
 }
 
 #[derive(Subcommand)]
-enum Commands {}
+enum Commands {
+  Debug,
+}
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
   let cli = Cli::parse();
   let path: PathBuf = cli.path.unwrap_or(".".into());
 
-  let instance = Instance::try_init(path);
+  let instance = Instance::try_init(path)?;
 
-  match cli.command {}
+  match cli.command {
+    Commands::Debug => {
+      println!("{:#?}", instance);
+    }
+  }
+
+  Ok(())
 }
