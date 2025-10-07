@@ -1,4 +1,11 @@
-## User Stories
+## TODO
+
+- [ ] Broadcast commands to each project folder
+  - [ ] Commands are key-value and defined on a per-project level.
+  - [ ] You might run `procon run start` that would run the start script of each project.
+  - [ ] `procon run nginx` might be a global script defined at a higher level in the structure to integrate each project into nginx.
+
+<!-- ## User Stories
 
 - I want to provide a GitHub link and have it clone my repo for me
   - Pull on update
@@ -18,7 +25,7 @@
   - [x] `apply` (applies config changes)
   - [ ] `update` (updates source)
   - [x] `run-proxy` (handles failures from daemons)
-- [ ] Config
+- [x] Config
   - [x] Added
     - [x] `Setup`, `Build`, `Start`
   - [x] Changed
@@ -34,14 +41,14 @@
     - [ ] Updates source
   - [ ] `Build`
     - [x] Builds source
-    - [ ] Generates Nginx config
-    - [ ] Applies Nginx
-  - [ ] `Start`
+    - [x] Generates Nginx config
+    - [x] Applies Nginx
+  - [x] `Start`
     - [x] Starts daemon (proxied)
-  - [ ] `Stop`
+  - [x] `Stop`
     - [x] Stops daemon
   - [ ] `Teardown`
     - [ ] Stops daemon
     - [ ] Removes daemon
     - [ ] Removes Nginx
-    - [ ] Removes artifacts
+    - [ ] Removes artifacts -->

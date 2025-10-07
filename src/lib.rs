@@ -1,4 +1,12 @@
-use std::{path::PathBuf, str::FromStr, sync::LazyLock};
+pub mod config;
+pub mod instance;
+
+use std::{
+  path::PathBuf,
+  process::{Command, Output, Stdio},
+  str::FromStr,
+  sync::LazyLock,
+};
 
 pub static SELF_PATH: LazyLock<PathBuf> = LazyLock::new(|| {
   // Absolute path to the currently running executable.
@@ -8,15 +16,27 @@ pub static SELF_PATH: LazyLock<PathBuf> = LazyLock::new(|| {
   exe.canonicalize().unwrap_or(exe)
 });
 
-// pub static NIX_SHELL_PATH: LazyLock<PathBuf> =
-//   LazyLock::new(|| which::which("nix-shell").unwrap());
 pub static NIX_SHELL_PATH: LazyLock<PathBuf> = LazyLock::new(|| {
   PathBuf::from_str("/nix/var/nix/profiles/default/bin/nix-shell").unwrap()
 });
 
-pub static IS_SAFE_MODE: LazyLock<bool> =
-  LazyLock::new(|| std::env::var_os("MODE").is_some_and(|v| v == "safe"));
+pub fn nix_shell(
+  path: PathBuf,
+  deps: Vec<String>,
+  cmds: Vec<String>,
+  piped: bool,
+) -> std::io::Result<Output> {
+  let mut cmd = Command::new(NIX_SHELL_PATH.as_path());
+  if piped {
+    cmd.stdout(Stdio::piped());
+    cmd.stderr(Stdio::piped());
+  }
 
-pub mod action;
-pub mod instance;
-pub mod project;
+  cmd.current_dir(path);
+  cmd
+    .arg("-p")
+    .args(deps)
+    .arg("--run")
+    .arg(cmds.to_vec().join("&&"));
+  cmd.output()
+}
