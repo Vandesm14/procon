@@ -1,6 +1,6 @@
 # Procon
 
-_Like Docker, but ran on your machine._
+_Like Docker, but directly on your machine._
 
 Procon is a project configuration and script manager. It lies in a space similar to Docker, where it allows you to build and run projects. However, Procon is different from Docker as it runs commands and scripts directly on your machine, instead of relying on virtualization and images.
 
