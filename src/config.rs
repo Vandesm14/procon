@@ -3,6 +3,8 @@ use std::{collections::HashMap, path::PathBuf};
 use internment::Intern;
 use serde::Deserialize;
 
+use crate::nix_shell;
+
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(untagged)]
 pub enum Definition {
@@ -17,45 +19,73 @@ pub enum Cmds {
   Many(Vec<String>),
 }
 
+impl Cmds {
+  pub fn run<'a, T>(
+    &self,
+    path: &PathBuf,
+    deps: Option<T>,
+  ) -> std::process::Command
+  where
+    T: Iterator<Item = &'a String>,
+  {
+    match self {
+      Cmds::Single(cmd) => nix_shell(path, deps, &[cmd.to_string()], true),
+      Cmds::Many(cmds) => nix_shell(path, deps, cmds, true),
+    }
+  }
+}
+
 #[derive(Debug, Clone, PartialEq, Deserialize)]
-pub struct Config {
+pub struct ConfigToml {
   #[serde(default)]
   call: HashMap<Intern<String>, Vec<String>>,
   #[serde(default)]
   define: HashMap<Intern<String>, Definition>,
   #[serde(default)]
   phases: HashMap<Intern<String>, Cmds>,
+  #[serde(default)]
+  deps: HashMap<Intern<String>, Vec<String>>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct ConfigHead {
-  path: PathBuf,
-  depth: usize,
+#[derive(Debug, Clone, PartialEq)]
+pub struct Config {
+  pub path: PathBuf,
+
+  pub call: HashMap<Intern<String>, Vec<String>>,
+  pub define: HashMap<Intern<String>, Definition>,
+  pub phases: HashMap<Intern<String>, Cmds>,
+  pub deps: HashMap<Intern<String>, Vec<String>>,
 }
 
-impl ConfigHead {
-  pub fn new(path: PathBuf, depth: usize) -> Self {
-    Self { path, depth }
+impl Config {
+  pub fn from_config_toml(path: PathBuf, config_toml: ConfigToml) -> Self {
+    Self {
+      path,
+      call: config_toml.call,
+      define: config_toml.define,
+      deps: config_toml.deps,
+      phases: config_toml.phases,
+    }
   }
 }
 
 #[derive(Debug, Default, Clone)]
 pub struct Configs {
-  configs: HashMap<ConfigHead, Config>,
+  configs: Vec<Config>,
 }
 
 impl Configs {
   pub fn new() -> Self {
     Self {
-      configs: HashMap::new(),
+      configs: Vec::new(),
     }
   }
 
-  pub fn add(&mut self, head: ConfigHead, config: Config) {
-    self.configs.insert(head, config);
+  pub fn push(&mut self, config: Config) {
+    self.configs.push(config);
   }
 
-  pub fn get(&self, head: &ConfigHead) -> Option<&Config> {
-    self.configs.get(head)
+  pub fn iter(&self) -> impl Iterator<Item = &Config> {
+    self.configs.iter()
   }
 }

@@ -3,7 +3,7 @@ pub mod instance;
 
 use std::{
   path::PathBuf,
-  process::{Command, Output, Stdio},
+  process::{Command, Stdio},
   str::FromStr,
   sync::LazyLock,
 };
@@ -20,23 +20,40 @@ pub static NIX_SHELL_PATH: LazyLock<PathBuf> = LazyLock::new(|| {
   PathBuf::from_str("/nix/var/nix/profiles/default/bin/nix-shell").unwrap()
 });
 
-pub fn nix_shell(
-  path: PathBuf,
-  deps: Vec<String>,
-  cmds: Vec<String>,
+pub fn nix_shell<'a, T>(
+  path: &PathBuf,
+  deps: Option<T>,
+  cmds: &[String],
   piped: bool,
-) -> std::io::Result<Output> {
-  let mut cmd = Command::new(NIX_SHELL_PATH.as_path());
-  if piped {
-    cmd.stdout(Stdio::piped());
-    cmd.stderr(Stdio::piped());
-  }
+) -> Command
+where
+  T: Iterator<Item = &'a String>,
+{
+  if let Some(deps) = deps {
+    let mut cmd = Command::new(NIX_SHELL_PATH.as_path());
+    if piped {
+      cmd.stdout(Stdio::piped());
+      cmd.stderr(Stdio::piped());
+    }
 
-  cmd.current_dir(path);
-  cmd
-    .arg("-p")
-    .args(deps)
-    .arg("--run")
-    .arg(cmds.to_vec().join("&&"));
-  cmd.output()
+    cmd.current_dir(path);
+    cmd
+      .arg("-p")
+      .args(deps)
+      .arg("--run")
+      .arg(cmds.to_vec().join("&&"));
+    cmd
+  } else {
+    let mut cmd = Command::new("/usr/bin/env");
+    cmd.arg("bash");
+
+    if piped {
+      cmd.stdout(Stdio::piped());
+      cmd.stderr(Stdio::piped());
+    }
+
+    cmd.current_dir(path);
+    cmd.arg("-c").arg(cmds.to_vec().join("&&"));
+    cmd
+  }
 }
