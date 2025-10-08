@@ -1,6 +1,6 @@
 use std::{fs, path::PathBuf};
 
-use walkdir::WalkDir;
+use ignore::Walk;
 
 use crate::config::{Config, ConfigHead, Configs};
 
@@ -29,8 +29,7 @@ impl Instance {
   }
 
   pub fn read_dir(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-    for entry in WalkDir::new(&self.path)
-      .into_iter()
+    for entry in Walk::new(&self.path)
       .filter_map(|e| e.ok())
       .filter(|f| f.file_name().to_str().unwrap() == "procon.toml")
     {
