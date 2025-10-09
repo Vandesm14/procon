@@ -6,6 +6,8 @@ Procon is a project configuration and script manager. It lies in a space similar
 
 ## Concept
 
+Procon is still in development, so I don't have a concrete structure yet. Here's how I vision procon to work:
+
 ```bash
 # Your directory structure might look something like this:
 # projects/
