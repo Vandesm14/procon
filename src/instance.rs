@@ -55,11 +55,12 @@ impl Instance {
   ) -> Result<(), Box<dyn std::error::Error>> {
     for cmd in cmds.into_iter() {
       for config in self.configs.iter() {
-        if let Some(cmds) = config.phases.get(&cmd) {
-          let mut command = cmds.run(
+        if let Some(phase) = config.phases.get(&cmd) {
+          let mut command = phase.cmds.run(
             &config.path,
             config.deps.get(&Intern::from_ref("nix")).map(|d| d.iter()),
           );
+
           if dry_run {
             println!("would run: {command:?}");
           } else {
@@ -67,9 +68,11 @@ impl Instance {
             match command.output() {
               Ok(output) => {
                 if output.status.success() {
-                  println!("{}", String::from_utf8_lossy(&output.stdout));
+                  for _ in output.stdout {
+                    print!("\\33[2K");
+                  }
                 } else {
-                  println!("{}", String::from_utf8_lossy(&output.stderr));
+                  panic!("failed.");
                 }
               }
               Err(e) => {

@@ -24,16 +24,16 @@ pub fn nix_shell<'a, T>(
   path: &PathBuf,
   deps: Option<T>,
   cmds: &[String],
-  piped: bool,
+  inherit: bool,
 ) -> Command
 where
   T: Iterator<Item = &'a String>,
 {
   if let Some(deps) = deps {
     let mut cmd = Command::new(NIX_SHELL_PATH.as_path());
-    if piped {
-      cmd.stdout(Stdio::piped());
-      cmd.stderr(Stdio::piped());
+    if inherit {
+      cmd.stdout(Stdio::inherit());
+      cmd.stderr(Stdio::inherit());
     }
 
     cmd.current_dir(path);
@@ -47,9 +47,9 @@ where
     let mut cmd = Command::new("/usr/bin/env");
     cmd.arg("bash");
 
-    if piped {
-      cmd.stdout(Stdio::piped());
-      cmd.stderr(Stdio::piped());
+    if inherit {
+      cmd.stdout(Stdio::inherit());
+      cmd.stderr(Stdio::inherit());
     }
 
     cmd.current_dir(path);

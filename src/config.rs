@@ -5,6 +5,8 @@ use serde::Deserialize;
 
 use crate::nix_shell;
 
+type Deps = HashMap<Intern<String>, Vec<String>>;
+
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(untagged)]
 pub enum Definition {
@@ -17,6 +19,59 @@ pub enum Definition {
 pub enum Cmds {
   Single(String),
   Many(Vec<String>),
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(untagged)]
+pub enum PhaseToml {
+  Cmds(Cmds),
+  Expanded {
+    cmds: Cmds,
+    #[serde(default)]
+    deps: Deps,
+    #[serde(default)]
+    before: Vec<String>,
+    #[serde(default)]
+    after: Vec<String>,
+  },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Phase {
+  pub cmds: Cmds,
+  pub deps: Deps,
+  pub before: Vec<String>,
+  pub after: Vec<String>,
+}
+
+impl From<PhaseToml> for Phase {
+  fn from(value: PhaseToml) -> Self {
+    match value {
+      PhaseToml::Cmds(cmds) => Self::from_cmds(cmds),
+      PhaseToml::Expanded {
+        cmds,
+        deps,
+        before,
+        after,
+      } => Self {
+        cmds,
+        deps,
+        before,
+        after,
+      },
+    }
+  }
+}
+
+impl Phase {
+  pub fn from_cmds(cmds: Cmds) -> Self {
+    Self {
+      cmds,
+      deps: Default::default(),
+      before: Default::default(),
+      after: Default::default(),
+    }
+  }
 }
 
 impl Cmds {
@@ -38,22 +93,16 @@ impl Cmds {
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct ConfigToml {
   #[serde(default)]
-  call: HashMap<Intern<String>, Vec<String>>,
+  phases: HashMap<Intern<String>, PhaseToml>,
   #[serde(default)]
-  define: HashMap<Intern<String>, Definition>,
-  #[serde(default)]
-  phases: HashMap<Intern<String>, Cmds>,
-  #[serde(default)]
-  deps: HashMap<Intern<String>, Vec<String>>,
+  deps: Deps,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Config {
   pub path: PathBuf,
 
-  pub call: HashMap<Intern<String>, Vec<String>>,
-  pub define: HashMap<Intern<String>, Definition>,
-  pub phases: HashMap<Intern<String>, Cmds>,
+  pub phases: HashMap<Intern<String>, Phase>,
   pub deps: HashMap<Intern<String>, Vec<String>>,
 }
 
@@ -61,10 +110,12 @@ impl Config {
   pub fn from_config_toml(path: PathBuf, config_toml: ConfigToml) -> Self {
     Self {
       path,
-      call: config_toml.call,
-      define: config_toml.define,
       deps: config_toml.deps,
-      phases: config_toml.phases,
+      phases: config_toml
+        .phases
+        .into_iter()
+        .map(|(key, val)| (key, Phase::from(val)))
+        .collect(),
     }
   }
 }
