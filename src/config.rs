@@ -73,8 +73,6 @@ pub enum PhaseToml {
     deps: Deps,
     #[serde(default)]
     before: Multi<Intern<String>>,
-    #[serde(default)]
-    after: Multi<Intern<String>>,
   },
 }
 
@@ -83,24 +81,13 @@ pub struct Phase {
   pub cmds: Cmds,
   pub deps: Deps,
   pub before: Multi<Intern<String>>,
-  pub after: Multi<Intern<String>>,
 }
 
 impl From<PhaseToml> for Phase {
   fn from(value: PhaseToml) -> Self {
     match value {
       PhaseToml::Cmds(cmds) => Self::from_cmds(cmds),
-      PhaseToml::Expanded {
-        cmds,
-        deps,
-        before,
-        after,
-      } => Self {
-        cmds,
-        deps,
-        before,
-        after,
-      },
+      PhaseToml::Expanded { cmds, deps, before } => Self { cmds, deps, before },
     }
   }
 }
@@ -111,7 +98,6 @@ impl Phase {
       cmds,
       deps: Default::default(),
       before: Default::default(),
-      after: Default::default(),
     }
   }
 
