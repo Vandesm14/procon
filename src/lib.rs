@@ -34,6 +34,7 @@ where
     if inherit {
       cmd.stdout(Stdio::inherit());
       cmd.stderr(Stdio::inherit());
+      cmd.stdin(Stdio::inherit());
     }
 
     cmd.current_dir(path);
@@ -50,6 +51,7 @@ where
     if inherit {
       cmd.stdout(Stdio::inherit());
       cmd.stderr(Stdio::inherit());
+      cmd.stdin(Stdio::inherit());
     }
 
     cmd.current_dir(path);
