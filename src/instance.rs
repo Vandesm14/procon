@@ -19,10 +19,6 @@ impl Instance {
     }
   }
 
-  pub fn services_path(&self) -> PathBuf {
-    dirs::config_dir().unwrap().join("systemd/user")
-  }
-
   pub fn try_init(path: PathBuf) -> Result<Self, Box<dyn std::error::Error>> {
     let mut instance = Instance::new(path.canonicalize()?);
     instance.read_dir()?;
