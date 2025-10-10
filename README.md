@@ -32,6 +32,14 @@ procon run build start
 # Dependencies using Nix.
 deps.nix = ["pnpm"]
 
-phases.build = "pnpm build"
-phases.start = "pnpm start"
+[phases]
+install = "pnpm install"
+
+[phases.build]
+before = "install"
+cmds = "pnpm build"
+
+[phases.start]
+before = "build"
+cmds = "pnpm start"
 ```
