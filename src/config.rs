@@ -21,6 +21,39 @@ pub enum Cmds {
   Many(Vec<String>),
 }
 
+#[derive(Debug, Clone, PartialEq, Default, Deserialize)]
+#[serde(untagged)]
+pub enum Multi<T> {
+  #[default]
+  None,
+  Single(T),
+  Many(Vec<T>),
+}
+
+impl<T> Multi<T> {
+  pub fn to_vec(&self) -> Vec<T>
+  where
+    T: Clone,
+  {
+    match self {
+      Multi::None => Vec::new(),
+      Multi::Single(t) => vec![t.clone()],
+      Multi::Many(ts) => ts.clone(),
+    }
+  }
+
+  pub fn to_option(&self) -> Option<Vec<T>>
+  where
+    T: Clone,
+  {
+    match self {
+      Multi::None => None,
+      Multi::Single(t) => Some(vec![t.clone()]),
+      Multi::Many(ts) => Some(ts.clone()),
+    }
+  }
+}
+
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(untagged)]
 pub enum PhaseToml {
@@ -30,9 +63,9 @@ pub enum PhaseToml {
     #[serde(default)]
     deps: Deps,
     #[serde(default)]
-    before: Vec<String>,
+    before: Multi<Intern<String>>,
     #[serde(default)]
-    after: Vec<String>,
+    after: Multi<Intern<String>>,
   },
 }
 
@@ -40,8 +73,8 @@ pub enum PhaseToml {
 pub struct Phase {
   pub cmds: Cmds,
   pub deps: Deps,
-  pub before: Vec<String>,
-  pub after: Vec<String>,
+  pub before: Multi<Intern<String>>,
+  pub after: Multi<Intern<String>>,
 }
 
 impl From<PhaseToml> for Phase {
@@ -70,6 +103,33 @@ impl Phase {
       deps: Default::default(),
       before: Default::default(),
       after: Default::default(),
+    }
+  }
+
+  pub fn run(&self, config: &Config, dry_run: bool) {
+    let mut command = self.cmds.run(
+      &config.path,
+      config.deps.get(&Intern::from_ref("nix")).map(|d| d.iter()),
+    );
+
+    if dry_run {
+      println!("would run: {command:?}");
+    } else {
+      println!("$ {command:?}");
+      match command.output() {
+        Ok(output) => {
+          if output.status.success() {
+            for _ in output.stdout {
+              print!("\\33[2K");
+            }
+          } else {
+            panic!("failed.");
+          }
+        }
+        Err(e) => {
+          println!("error: {e}");
+        }
+      }
     }
   }
 }

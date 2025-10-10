@@ -3,7 +3,7 @@ use std::{fs, path::PathBuf};
 use ignore::Walk;
 use internment::Intern;
 
-use crate::config::{Config, ConfigToml, Configs};
+use crate::config::{Config, ConfigToml, Configs, Phase};
 
 #[derive(Debug, Clone, Default)]
 pub struct Instance {
@@ -53,33 +53,28 @@ impl Instance {
     cmds: Vec<Intern<String>>,
     dry_run: bool,
   ) -> Result<(), Box<dyn std::error::Error>> {
+    let mut runbook: Vec<&Phase> = Vec::with_capacity(1);
+    let mut lookup: Vec<Intern<String>> = Vec::with_capacity(1);
     for cmd in cmds.into_iter() {
       for config in self.configs.iter() {
-        if let Some(phase) = config.phases.get(&cmd) {
-          let mut command = phase.cmds.run(
-            &config.path,
-            config.deps.get(&Intern::from_ref("nix")).map(|d| d.iter()),
-          );
+        lookup.clear();
+        lookup.push(cmd);
 
-          if dry_run {
-            println!("would run: {command:?}");
-          } else {
-            println!("$ {command:?}");
-            match command.output() {
-              Ok(output) => {
-                if output.status.success() {
-                  for _ in output.stdout {
-                    print!("\\33[2K");
-                  }
-                } else {
-                  panic!("failed.");
-                }
-              }
-              Err(e) => {
-                println!("error: {e}");
-              }
+        while !lookup.is_empty() {
+          let Some(cmd) = lookup.pop() else {
+            unreachable!()
+          };
+          if let Some(phase) = config.phases.get(&cmd) {
+            runbook.push(phase);
+
+            if let Some(before) = phase.before.to_option() {
+              lookup.extend(before);
             }
           }
+        }
+
+        for phase in runbook.drain(..).rev() {
+          phase.run(config, dry_run);
         }
       }
     }
