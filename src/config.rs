@@ -9,16 +9,25 @@ type Deps = HashMap<Intern<String>, Vec<String>>;
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(untagged)]
-pub enum Definition {
+pub enum Cmds {
   Single(String),
   Many(Vec<String>),
 }
 
-#[derive(Debug, Clone, PartialEq, Deserialize)]
-#[serde(untagged)]
-pub enum Cmds {
-  Single(String),
-  Many(Vec<String>),
+impl Cmds {
+  pub fn run<'a, T>(
+    &self,
+    path: &PathBuf,
+    deps: Option<T>,
+  ) -> std::process::Command
+  where
+    T: Iterator<Item = &'a String>,
+  {
+    match self {
+      Cmds::Single(cmd) => nix_shell(path, deps, &[cmd.to_string()], true),
+      Cmds::Many(cmds) => nix_shell(path, deps, cmds, true),
+    }
+  }
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Deserialize)]
@@ -130,22 +139,6 @@ impl Phase {
           println!("error: {e}");
         }
       }
-    }
-  }
-}
-
-impl Cmds {
-  pub fn run<'a, T>(
-    &self,
-    path: &PathBuf,
-    deps: Option<T>,
-  ) -> std::process::Command
-  where
-    T: Iterator<Item = &'a String>,
-  {
-    match self {
-      Cmds::Single(cmd) => nix_shell(path, deps, &[cmd.to_string()], true),
-      Cmds::Many(cmds) => nix_shell(path, deps, cmds, true),
     }
   }
 }
