@@ -3,7 +3,7 @@ use std::{fs, path::PathBuf};
 use ignore::Walk;
 use internment::Intern;
 
-use crate::config::{Config, ConfigToml, Configs, Phase};
+use crate::config::{Config, ConfigToml, Configs};
 
 #[derive(Debug, Clone, Default)]
 pub struct Instance {
@@ -46,30 +46,12 @@ impl Instance {
 
   pub fn cmd_run(
     &self,
-    cmds: Vec<Intern<String>>,
+    phase_strings: Vec<Intern<String>>,
     dry_run: bool,
   ) -> Result<(), Box<dyn std::error::Error>> {
-    let mut runbook: Vec<&Phase> = Vec::with_capacity(1);
-    let mut lookup: Vec<Intern<String>> = Vec::with_capacity(1);
-    for cmd in cmds.into_iter() {
+    for phase_string in phase_strings.into_iter() {
       for config in self.configs.iter() {
-        lookup.clear();
-        lookup.push(cmd);
-
-        while !lookup.is_empty() {
-          let Some(cmd) = lookup.pop() else {
-            unreachable!()
-          };
-          if let Some(phase) = config.phases.get(&cmd) {
-            runbook.push(phase);
-
-            if let Some(before) = phase.before.to_option() {
-              lookup.extend(before);
-            }
-          }
-        }
-
-        for phase in runbook.drain(..).rev() {
+        if let Some(phase) = config.phases.get(&phase_string) {
           phase.run(config, dry_run);
         }
       }
