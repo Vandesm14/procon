@@ -1,0 +1,15 @@
+version: '3.8'
+
+services:
+  procon:
+    image: procon
+    build: .
+    volumes:
+      - target-cache:/build/target
+    working_dir: /app/test
+    stdin_open: true
+    tty: true
+
+volumes:
+  target-cache:
+

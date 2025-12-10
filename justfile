@@ -6,13 +6,13 @@ default:
 
 # Build the Docker image
 build:
-  docker build -t {{IMAGE_NAME}} .
-  docker container rm -f {{IMAGE_NAME}}
+  docker-compose build
+  docker-compose down
 
 # Open a shell directly in the container
 shell: build
   clear
-  docker run --name {{IMAGE_NAME}} -it {{IMAGE_NAME}} nix-shell -p toybox yazi
+  docker-compose run --rm {{IMAGE_NAME}} nix-shell -p toybox yazi
 
 serve:
   rm -rf out.zip
