@@ -25,7 +25,7 @@ enum Commands {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
   let cli = Cli::parse();
-  let path: PathBuf = cli.path.unwrap_or(".".into());
+  let path: PathBuf = cli.path.unwrap_or("procon.yaml".into());
 
   let instance = Instance::try_init(path).unwrap();
 
