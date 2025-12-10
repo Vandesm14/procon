@@ -2,14 +2,18 @@ version: '3.8'
 
 services:
   procon:
-    image: procon
+    image: procon-dev
+    container_name: procon-dev
     build: .
     volumes:
       - target-cache:/build/target
+      - cargo-cache:/root/.cargo
     working_dir: /app/test
     stdin_open: true
     tty: true
+    command: sleep infinity
 
 volumes:
   target-cache:
+  cargo-cache:
 

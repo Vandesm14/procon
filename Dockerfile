@@ -1,21 +1,16 @@
 FROM nixos/nix
 
+# Update nix channels and install base tools
 RUN nix-channel --update
-RUN nix-env -iA nixpkgs.yazi nixpkgs.toybox
+RUN nix-env -iA nixpkgs.yazi nixpkgs.toybox nixpkgs.rsync
 RUN nix-shell -p rustup --run "rustup default stable"
 
-WORKDIR /build
-COPY Cargo.toml .
-COPY Cargo.lock .
-COPY src src
-
-RUN nix-shell -p rustup --run "cargo build"
-
-RUN mkdir -p /usr/local/bin
+# Create working directories
+RUN mkdir -p /build /app/test /usr/local/bin
 ENV PATH="$PATH:/usr/local/bin"
-RUN cp target/debug/procon /usr/local/bin
 
-WORKDIR /app
-COPY test test
+# Set up build directory
+WORKDIR /build
 
-WORKDIR /app/test
+# Keep container running
+CMD ["sleep", "infinity"]
