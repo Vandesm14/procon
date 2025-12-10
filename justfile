@@ -49,7 +49,7 @@ build-release:
 update: sync build
 
 # Open a shell in the container
-shell:
+shell: update
   docker exec -it {{CONTAINER_NAME}} nix-shell -p toybox yazi
 
 # Run procon in the container
