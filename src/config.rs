@@ -87,6 +87,8 @@ pub struct Project {
 #[derive(Debug, Clone, Default, PartialEq, Deserialize)]
 pub struct Config {
   pub projects: HashMap<String, Project>,
+  #[serde(default)]
   pub global: HashMap<String, String>,
+  #[serde(default)]
   pub enumerations: HashMap<String, Phase>,
 }
