@@ -1,6 +1,7 @@
 use std::{collections::HashMap, path::PathBuf};
 
 use internment::Intern;
+use path_clean::PathClean;
 use serde::Deserialize;
 
 use crate::{multi::Multi, nix_shell};
@@ -46,14 +47,14 @@ impl Phase {
   pub fn run(&self, config: &Project, dry_run: bool) {
     for step in self.steps.iter() {
       let path = if let Some(cwd) = &step.cwd {
-        &config.dir.join(cwd)
+        config.dir.join(cwd).clean()
       } else {
-        &config.dir
+        config.dir.clone()
       };
 
       let mut command = step
         .run
-        .assemble(path, step.deps.to_option().as_ref().map(|d| d.iter()));
+        .assemble(&path, step.deps.to_option().as_ref().map(|d| d.iter()));
 
       if dry_run {
         println!("would run: {command:?}");
