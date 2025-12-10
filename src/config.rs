@@ -84,9 +84,9 @@ pub struct Project {
   pub phases: HashMap<Intern<String>, Phase>,
 }
 
-#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
 pub struct Config {
-  projects: HashMap<String, Project>,
-  global: HashMap<String, String>,
-  enumerations: HashMap<String, Phase>,
+  pub projects: HashMap<String, Project>,
+  pub global: HashMap<String, String>,
+  pub enumerations: HashMap<String, Phase>,
 }

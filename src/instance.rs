@@ -1,13 +1,12 @@
 use std::{fs, path::PathBuf};
 
-use ignore::Walk;
 use internment::Intern;
 
-use crate::config::Project;
+use crate::config::Config;
 
 #[derive(Debug, Clone, Default)]
 pub struct Instance {
-  projects: Vec<Project>,
+  config: Config,
   path: PathBuf,
 }
 
@@ -15,30 +14,19 @@ impl Instance {
   pub fn new(path: PathBuf) -> Self {
     Self {
       path,
-      projects: Vec::new(),
+      config: Config::default(),
     }
   }
 
   pub fn try_init(path: PathBuf) -> Result<Self, Box<dyn std::error::Error>> {
     let mut instance = Instance::new(path.canonicalize()?);
-    instance.read_dir()?;
+    let content = fs::read_to_string(&instance.path)?;
+    let config: Config = serde_norway::from_str(&content).unwrap_or_else(|e| {
+      panic!("Failed to parse {}: {e}", instance.path.display())
+    });
+    instance.config = config;
+
     Ok(instance)
-  }
-
-  pub fn read_dir(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-    for entry in Walk::new(&self.path)
-      .filter_map(|e| e.ok())
-      .filter(|f| f.file_name().to_str().unwrap() == "procon.yaml")
-    {
-      let project: Project =
-        serde_norway::from_str(&fs::read_to_string(entry.path()).unwrap())
-          .unwrap_or_else(|e| {
-            panic!("Failed to parse {}: {e}", entry.path().display())
-          });
-      self.projects.push(project);
-    }
-
-    Ok(())
   }
 
   pub fn cmd_run(
@@ -47,9 +35,9 @@ impl Instance {
     dry_run: bool,
   ) -> Result<(), Box<dyn std::error::Error>> {
     for phase_string in phase_strings.into_iter() {
-      for config in self.projects.iter() {
-        if let Some(phase) = config.phases.get(&phase_string) {
-          phase.run(config, dry_run);
+      for (_, project) in self.config.projects.iter() {
+        if let Some(phase) = project.phases.get(&phase_string) {
+          phase.run(project, dry_run);
         }
       }
     }
