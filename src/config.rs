@@ -87,6 +87,28 @@ impl Step {
         }
         Exec::Task(exec_task) => {
           let task = config.tasks.get(&exec_task.task).expect("task not found");
+
+          let missing_args: Vec<String> = task
+            .args
+            .iter()
+            .filter(|arg| !exec_task.with.contains_key(*arg))
+            .cloned()
+            .collect();
+
+          if !missing_args.is_empty() {
+            panic!(
+              "task '{}' requires arguments: {}, but only provided: {}",
+              exec_task.task,
+              missing_args.join(", "),
+              exec_task
+                .with
+                .keys()
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(", ")
+            );
+          }
+
           let task_args = exec_task.with.clone();
           for task_step in &task.steps {
             queue.push_back((task_step, task_args.clone()));
