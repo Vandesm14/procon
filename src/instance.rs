@@ -32,10 +32,17 @@ impl Instance {
   pub fn cmd_run(
     &self,
     phase_strings: Vec<Intern<String>>,
+    project_filter: Option<Vec<String>>,
     dry_run: bool,
   ) -> Result<(), Box<dyn std::error::Error>> {
     for phase_string in phase_strings.into_iter() {
-      for (_, project) in self.config.projects.iter() {
+      for (project_name, project) in self.config.projects.iter() {
+        if let Some(ref filter) = project_filter
+          && !filter.contains(project_name)
+        {
+          continue;
+        }
+
         if let Some(phase) = project.phases.get(&phase_string) {
           phase.run(&self.config, project, dry_run);
         }

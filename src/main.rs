@@ -7,8 +7,10 @@ use procon::instance::Instance;
 #[derive(Parser)]
 #[command(author, version, about)]
 struct Cli {
+  /// Specify an alternate config file (default: procon.yaml)
   #[arg(short, long)]
-  path: Option<PathBuf>,
+  file: Option<PathBuf>,
+
   #[command(subcommand)]
   command: Commands,
 }
@@ -17,15 +19,23 @@ struct Cli {
 enum Commands {
   Debug,
   Run {
-    cmds: Vec<Intern<String>>,
+    /// Phase(s) to run
+    phases: Vec<Intern<String>>,
+
+    /// Project name(s) to filter (if not specified, runs on all projects)
     #[arg(short, long)]
+    projects: Vec<String>,
+
+    /// Dry run. Prints out commands that procon will run instead of running
+    /// them.
+    #[arg(short = 'n', long)]
     dry_run: bool,
   },
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
   let cli = Cli::parse();
-  let path: PathBuf = cli.path.unwrap_or("procon.yaml".into());
+  let path: PathBuf = cli.file.unwrap_or("procon.yaml".into());
 
   let instance = Instance::try_init(path).unwrap();
 
@@ -33,8 +43,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Commands::Debug => {
       println!("{:#?}", instance);
     }
-    Commands::Run { cmds, dry_run } => {
-      instance.cmd_run(cmds, dry_run).unwrap();
+    Commands::Run {
+      projects,
+      phases,
+      dry_run,
+    } => {
+      let project_filter = if projects.is_empty() {
+        None
+      } else {
+        Some(projects)
+      };
+
+      instance.cmd_run(phases, project_filter, dry_run).unwrap();
     }
   }
 
