@@ -50,6 +50,7 @@ impl Cmds {
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct ExecTask {
   task: String,
+  #[serde(default)]
   with: HashMap<String, String>,
 }
 
