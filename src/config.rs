@@ -3,7 +3,6 @@ use std::{
   path::PathBuf,
 };
 
-use internment::Intern;
 use path_clean::PathClean;
 use serde::Deserialize;
 
@@ -167,7 +166,7 @@ impl Phase {
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct Project {
   pub dir: PathBuf,
-  pub phases: HashMap<Intern<String>, Phase>,
+  pub phases: HashMap<String, Phase>,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]

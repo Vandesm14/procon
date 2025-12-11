@@ -1,7 +1,5 @@
 use std::{fs, path::PathBuf};
 
-use internment::Intern;
-
 use crate::config::Config;
 
 #[derive(Debug, Clone, Default)]
@@ -31,7 +29,7 @@ impl Instance {
 
   pub fn cmd_run(
     &self,
-    phase_strings: Vec<Intern<String>>,
+    phase_strings: Vec<String>,
     project_filter: Option<Vec<String>>,
     dry_run: bool,
   ) -> Result<(), Box<dyn std::error::Error>> {

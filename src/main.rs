@@ -1,7 +1,6 @@
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand, command};
-use internment::Intern;
 use procon::instance::Instance;
 
 #[derive(Parser)]
@@ -20,7 +19,7 @@ enum Commands {
   Debug,
   Run {
     /// Phase(s) to run
-    phases: Vec<Intern<String>>,
+    phases: Vec<String>,
 
     /// Project name(s) to filter (if not specified, runs on all projects)
     #[arg(short, long)]
