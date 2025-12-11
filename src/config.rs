@@ -3,6 +3,7 @@ use std::{
   path::PathBuf,
 };
 
+use colored::Colorize;
 use path_clean::PathClean;
 use serde::Deserialize;
 
@@ -142,7 +143,7 @@ impl Phase {
         if dry_run {
           println!("would run: {command:?}");
         } else {
-          println!("$ {command:?}");
+          println!("{}", format!("$ {command:?}").bold());
           match command.output() {
             Ok(output) => {
               if output.status.success() {
