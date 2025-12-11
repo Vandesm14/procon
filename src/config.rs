@@ -1,10 +1,21 @@
-use std::{collections::HashMap, path::PathBuf};
+use std::{
+  collections::{HashMap, VecDeque},
+  path::PathBuf,
+};
 
 use internment::Intern;
 use path_clean::PathClean;
 use serde::Deserialize;
 
 use crate::{multi::Multi, nix_shell};
+
+fn substitute_args(cmd: &str, args: &HashMap<String, String>) -> String {
+  let mut result = cmd.to_string();
+  for (k, v) in args {
+    result = result.replace(&format!("{{{{{k}}}}}"), v);
+  }
+  result
+}
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(untagged)]
@@ -27,15 +38,64 @@ impl Cmds {
       Cmds::Many(cmds) => nix_shell(path, deps, cmds, true),
     }
   }
+
+  pub fn to_vec(&self) -> Vec<String> {
+    match self {
+      Cmds::Single(cmd) => vec![cmd.to_string()],
+      Cmds::Many(cmds) => cmds.clone(),
+    }
+  }
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct ExecTask {
+  task: String,
+  with: HashMap<String, String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+#[serde(untagged)]
+pub enum Exec {
+  Run { run: Cmds },
+  Task(ExecTask),
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct Step {
-  run: Cmds,
+  #[serde(flatten)]
+  exec: Exec,
   #[serde(default)]
   deps: Multi<String>,
   #[serde(default)]
   cwd: Option<PathBuf>,
+}
+
+impl Step {
+  pub fn assemble(config: &Config, step: &Step) -> Vec<String> {
+    let mut cmds = Vec::new();
+    let mut queue: VecDeque<(&Step, HashMap<String, String>)> = VecDeque::new();
+    queue.push_back((step, HashMap::new()));
+
+    while let Some((current, args)) = queue.pop_front() {
+      match &current.exec {
+        Exec::Run { run } => {
+          for cmd in run.to_vec() {
+            cmds.push(substitute_args(&cmd, &args));
+          }
+        }
+        Exec::Task(exec_task) => {
+          let task = config.tasks.get(&exec_task.task).expect("task not found");
+          let task_args = exec_task.with.clone();
+          for task_step in &task.steps {
+            queue.push_back((task_step, task_args.clone()));
+          }
+        }
+      }
+    }
+
+    cmds
+  }
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -44,34 +104,36 @@ pub struct Phase {
 }
 
 impl Phase {
-  pub fn run(&self, config: &Project, dry_run: bool) {
+  pub fn run(&self, config: &Config, project: &Project, dry_run: bool) {
     for step in self.steps.iter() {
       let path = if let Some(cwd) = &step.cwd {
-        config.dir.join(cwd).clean()
+        project.dir.join(cwd).clean()
       } else {
-        config.dir.clone()
+        project.dir.clone()
       };
 
-      let mut command = step
-        .run
-        .assemble(&path, step.deps.to_option().as_ref().map(|d| d.iter()));
+      let cmds = Step::assemble(config, step);
+      for cmd in cmds {
+        let mut command = Cmds::Single(cmd)
+          .assemble(&path, step.deps.to_option().as_ref().map(|d| d.iter()));
 
-      if dry_run {
-        println!("would run: {command:?}");
-      } else {
-        println!("$ {command:?}");
-        match command.output() {
-          Ok(output) => {
-            if output.status.success() {
-              for _ in output.stdout {
-                print!("\\33[2K");
+        if dry_run {
+          println!("would run: {command:?}");
+        } else {
+          println!("$ {command:?}");
+          match command.output() {
+            Ok(output) => {
+              if output.status.success() {
+                for _ in output.stdout {
+                  print!("\\33[2K");
+                }
+              } else {
+                panic!("failed.");
               }
-            } else {
-              panic!("failed.");
             }
-          }
-          Err(e) => {
-            println!("error: {e}");
+            Err(e) => {
+              println!("error: {e}");
+            }
           }
         }
       }
@@ -85,11 +147,16 @@ pub struct Project {
   pub phases: HashMap<Intern<String>, Phase>,
 }
 
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct Task {
+  #[serde(default)]
+  args: Vec<String>,
+  steps: Vec<Step>,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Deserialize)]
 pub struct Config {
   pub projects: HashMap<String, Project>,
   #[serde(default)]
-  pub global: HashMap<String, String>,
-  #[serde(default)]
-  pub enumerations: HashMap<String, Phase>,
+  pub tasks: HashMap<String, Task>,
 }

@@ -37,7 +37,7 @@ impl Instance {
     for phase_string in phase_strings.into_iter() {
       for (_, project) in self.config.projects.iter() {
         if let Some(phase) = project.phases.get(&phase_string) {
-          phase.run(project, dry_run);
+          phase.run(&self.config, project, dry_run);
         }
       }
     }
