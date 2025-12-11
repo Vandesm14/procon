@@ -33,6 +33,7 @@ impl Instance {
     project_filter: Option<Vec<String>>,
     dry_run: bool,
   ) -> Result<(), Box<dyn std::error::Error>> {
+    let mut ignore: Vec<String> = Vec::new();
     for phase_string in phase_strings.into_iter() {
       for (project_name, project) in self.config.projects.iter() {
         if let Some(ref filter) = project_filter
@@ -41,8 +42,14 @@ impl Instance {
           continue;
         }
 
-        if let Some(phase) = project.phases.get(&phase_string) {
-          phase.run(&self.config, project, dry_run);
+        if ignore.contains(project_name) {
+          continue;
+        }
+
+        if let Some(phase) = project.phases.get(&phase_string)
+          && !phase.run(&self.config, project, dry_run)
+        {
+          ignore.push(project_name.clone());
         }
       }
     }

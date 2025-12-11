@@ -126,7 +126,7 @@ pub struct Phase {
 }
 
 impl Phase {
-  pub fn run(&self, config: &Config, project: &Project, dry_run: bool) {
+  pub fn run(&self, config: &Config, project: &Project, dry_run: bool) -> bool {
     for step in self.steps.iter() {
       let path = if let Some(cwd) = &step.cwd {
         project.dir.join(cwd).clean()
@@ -150,7 +150,8 @@ impl Phase {
                   print!("\\33[2K");
                 }
               } else {
-                panic!("failed.");
+                println!("failed.");
+                return false;
               }
             }
             Err(e) => {
@@ -160,6 +161,8 @@ impl Phase {
         }
       }
     }
+
+    true
   }
 }
 
