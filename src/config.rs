@@ -7,7 +7,7 @@ use colored::Colorize;
 use path_clean::PathClean;
 use serde::Deserialize;
 
-use crate::{multi::Multi, nix_shell};
+use crate::nix_shell;
 
 fn substitute_args(cmd: &str, args: &HashMap<String, String>) -> String {
   let mut result = cmd.to_string();
@@ -67,7 +67,7 @@ pub struct Step {
   #[serde(flatten)]
   exec: Exec,
   #[serde(default)]
-  deps: Multi<String>,
+  deps: Vec<String>,
   #[serde(default)]
   cwd: Option<PathBuf>,
 }
@@ -137,8 +137,14 @@ impl Phase {
 
       let cmds = Step::assemble(config, step);
       for cmd in cmds {
-        let mut command = Cmds::Single(cmd)
-          .assemble(&path, step.deps.to_option().as_ref().map(|d| d.iter()));
+        let mut command = Cmds::Single(cmd).assemble(
+          &path,
+          if step.deps.is_empty() {
+            None
+          } else {
+            Some(step.deps.iter())
+          },
+        );
 
         if dry_run {
           println!("would run: {command:?}");
