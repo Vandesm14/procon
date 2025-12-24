@@ -3,6 +3,7 @@ pub mod instance;
 pub mod multi;
 
 use std::{
+  fs,
   path::{Path, PathBuf},
   process::{Command, Stdio},
   str::FromStr,
@@ -37,9 +38,13 @@ pub fn nix_shell<'a, T>(
 where
   T: Iterator<Item = &'a String>,
 {
+  // Make project_dir absolute
+  let absolute_project_dir = fs::canonicalize(project_dir)
+    .unwrap_or_else(|_| project_dir.to_path_buf());
+
   // Escape project_name and project_dir for bash
   let escaped_name = escape_bash_string(project_name);
-  let escaped_dir = escape_bash_string(&project_dir.to_string_lossy());
+  let escaped_dir = escape_bash_string(&absolute_project_dir.to_string_lossy());
 
   // Prepend environment variables to commands
   let env_prefix = format!(
