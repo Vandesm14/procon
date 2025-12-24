@@ -78,9 +78,9 @@ pub struct Step {
   #[serde(flatten)]
   exec: Exec,
   #[serde(default)]
-  deps: Vec<String>,
+  pub deps: Vec<String>,
   #[serde(default)]
-  cwd: Option<PathBuf>,
+  pub cwd: Option<PathBuf>,
 }
 
 impl Step {
@@ -210,4 +210,6 @@ pub struct Config {
   pub projects: HashMap<String, Project>,
   #[serde(default)]
   pub tasks: HashMap<String, Task>,
+  #[serde(default)]
+  pub global: HashMap<String, Vec<Step>>,
 }

@@ -18,12 +18,16 @@ struct Cli {
 enum Commands {
   Debug,
   Run {
-    /// Phase(s) to run
+    /// Phase(s) to run (or global command(s) if --global is used)
     phases: Vec<String>,
 
     /// Project name(s) to filter (if not specified, runs on all projects)
     #[arg(short, long)]
     projects: Vec<String>,
+
+    /// Run global commands instead of project phases
+    #[arg(short = 'g', long)]
+    global: bool,
 
     /// Dry run. Prints out commands that procon will run instead of running
     /// them.
@@ -45,15 +49,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Commands::Run {
       projects,
       phases,
+      global,
       dry_run,
     } => {
-      let project_filter = if projects.is_empty() {
-        None
+      if global {
+        // Run global commands
+        instance.cmd_run_global(phases, dry_run).unwrap();
       } else {
-        Some(projects)
-      };
+        // Run project phases
+        let project_filter = if projects.is_empty() {
+          None
+        } else {
+          Some(projects)
+        };
 
-      instance.cmd_run(phases, project_filter, dry_run).unwrap();
+        instance.cmd_run(phases, project_filter, dry_run).unwrap();
+      }
     }
   }
 
