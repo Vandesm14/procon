@@ -47,7 +47,7 @@ impl Instance {
         }
 
         if let Some(phase) = project.phases.get(&phase_string)
-          && !phase.run(&self.config, project, dry_run)
+          && !phase.run(&self.config, project, project_name, dry_run)
         {
           ignore.push(project_name.clone());
         }

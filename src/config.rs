@@ -1,6 +1,6 @@
 use std::{
   collections::{HashMap, VecDeque},
-  path::PathBuf,
+  path::{Path, PathBuf},
 };
 
 use colored::Colorize;
@@ -29,13 +29,24 @@ impl Cmds {
     &self,
     path: &PathBuf,
     deps: Option<T>,
+    project_name: &str,
+    project_dir: &Path,
   ) -> std::process::Command
   where
     T: Iterator<Item = &'a String>,
   {
     match self {
-      Cmds::Single(cmd) => nix_shell(path, deps, &[cmd.to_string()], true),
-      Cmds::Many(cmds) => nix_shell(path, deps, cmds, true),
+      Cmds::Single(cmd) => nix_shell(
+        path,
+        deps,
+        &[cmd.to_string()],
+        true,
+        project_name,
+        project_dir,
+      ),
+      Cmds::Many(cmds) => {
+        nix_shell(path, deps, cmds, true, project_name, project_dir)
+      }
     }
   }
 
@@ -127,7 +138,13 @@ pub struct Phase {
 }
 
 impl Phase {
-  pub fn run(&self, config: &Config, project: &Project, dry_run: bool) -> bool {
+  pub fn run(
+    &self,
+    config: &Config,
+    project: &Project,
+    project_name: &str,
+    dry_run: bool,
+  ) -> bool {
     for step in self.steps.iter() {
       let path = if let Some(cwd) = &step.cwd {
         project.dir.join(cwd).clean()
@@ -144,6 +161,8 @@ impl Phase {
           } else {
             Some(step.deps.iter())
           },
+          project_name,
+          &project.dir,
         );
 
         if dry_run {
