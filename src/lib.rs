@@ -42,8 +42,10 @@ where
   let escaped_dir = escape_bash_string(&project_dir.to_string_lossy());
 
   // Prepend environment variables to commands
-  let env_prefix =
-    format!("PROJECT_NAME={} PROJECT_DIR={} ", escaped_name, escaped_dir);
+  let env_prefix = format!(
+    "PROJECT_NAME={} PROJECT_DIR={}; ",
+    escaped_name, escaped_dir
+  );
   let joined_cmds = cmds
     .iter()
     .map(|cmd| format!("{}{}", env_prefix, cmd))
